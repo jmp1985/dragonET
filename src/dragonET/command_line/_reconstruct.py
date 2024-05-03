@@ -130,7 +130,7 @@ def reconstruct(args: List[str] = None):
     reconstruct_impl(get_parser().parse_args(args=args))
 
 
-def prepare_geometry(P: np.ndarray, pixel_size: int = 1) -> np.ndarray:
+def _prepare_astra_geometry(P: np.ndarray, pixel_size: int = 1) -> np.ndarray:
     """
     Prepare the geometry vectors
 
@@ -307,7 +307,7 @@ def _reconstruct(
     pixel_size = 1
 
     # Prepare the geometry vector description
-    vectors = prepare_geometry(P, pixel_size=1)
+    vectors = _prepare_astra_geometry(P, pixel_size=1)
 
     # Do the reconstruction with astra
     volume = _reconstruct_with_astra(projections, vectors, volume, num_iterations)
