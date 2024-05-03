@@ -79,6 +79,7 @@ test = [
 #
 [project.scripts]
 
+"dragonET.pick" = "dragonET.command_line:pick"
 "dragonET.refine" = "dragonET.command_line:refine"
 "dragonET.reconstruct" = "dragonET.command_line:reconstruct"
 
