@@ -1,9 +1,9 @@
-# python-template
+# dragonET
 
-This is an example python repository that can be used as a template for other projects
+> **dragonET**: **D**odgy **R**econstruction and **A**lignment of **G**eneral **O**rientatio**N**s for **E**lectron **T**omography
 
 ![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)
-[![Building](https://github.com/rosalindfranklininstitute/python-template/actions/workflows/python-package.yml/badge.svg)](https://github.com/rosalindfranklininstitute/python-template/actions/workflows/python-package.yml)
+[![Building](https://github.com/jmp1985/dragonET/actions/workflows/python-package.yml/badge.svg)](https://github.com/jmp1985/dragonET/actions/workflows/python-package.yml)
 
 ## Installation
 
@@ -24,7 +24,7 @@ pytest
 
 ## Issues
 
-Please use the [GitHub issue tracker](https://github.com/rosalindfranklininstitute/python-template/issues) to submit bugs or request features.
+Please use the [GitHub issue tracker](https://github.com/jmp1985/dragonET/issues) to submit bugs or request features.
 
 ## Contributions
 
@@ -34,5 +34,4 @@ If you would like to help contribute to profet, please read our [contribution](C
 
 Copyright Rosalind Franklin Institute, 2024.
 
-Distributed under the terms of the Apache-2.0 license, python-template is free and open source software.
-
+Distributed under the terms of the Apache-2.0 license, dragonET is free and open source software.

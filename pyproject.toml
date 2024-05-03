@@ -12,9 +12,9 @@ build-backend = "setuptools.build_meta"
 #
 [project]
 
-name = "template"
+name = "dragonET"
 
-description = "A Python project template"
+description = "Dodgy Reconstruction and Alignment of General OrientatioNs for Electron Tomography"
 
 readme = "README.md"
 
@@ -23,13 +23,13 @@ requires-python = ">=3.6"
 license = {file = "LICENSE"}
 
 keywords = [
-  "template", 
-  "python", 
+  "dragonET",
+  "python",
   "project"
 ]
 
 authors = [
-  {name = "Aaron A. Aaronson", email = "aaron.aaronson@example.com" }
+  {name = "James Parkhurst", email = "james.parkhurst@diamond.ac.uk" }
 ]
 
 classifiers = [
@@ -45,7 +45,11 @@ classifiers = [
 ]
 
 dependencies = [
-  "numpy"
+  "matplotlib",
+  "mrcfile",
+  "numpy",
+  "scipy",
+  "pyyaml",
 ]
 
 dynamic = [
@@ -57,8 +61,8 @@ dynamic = [
 #
 [project.urls]
 
-"Source" = "https://github.com/rosalindfranklininstitute/python-template"
-"Tracker" = "https://github.com/rosalindfranklininstitute/python-template/issues"
+"Source" = "https://github.com/jmp1985/dragonET"
+"Tracker" = "https://github.com/jmp1985/dragonET/issues"
 
 #
 # Project additional optional dependencies
@@ -75,7 +79,8 @@ test = [
 #
 [project.scripts]
 
-python-template = "template.command_line:main"
+"dragonET.refine" = "dragonET.command_line:refine"
+"dragonET.reconstruct" = "dragonET.command_line:reconstruct"
 
 #
 # Configure setup tools
@@ -89,14 +94,14 @@ where = ["src"]
 #
 [tool.setuptools.dynamic]
 
-version = {attr = "template._version.__version__"}
+version = {attr = "dragonET._version.__version__"}
 
 #
 # Configure setuptools-scm to generate version file
 #
 [tool.setuptools_scm]
 
-write_to = "src/template/_version.py"
+write_to = "src/dragonET/_version.py"
 
 #
 # Configure pytest

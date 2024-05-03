@@ -1,4 +1,4 @@
-# Code of Conduct - python-template
+# Code of Conduct - dragonET
 
 ## Our Pledge
 
