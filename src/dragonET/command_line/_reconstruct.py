@@ -361,6 +361,13 @@ def _reconstruct(
     def normalise(v):
         return v / np.linalg.norm(v)
 
+    def recon(projections, P, volume, pixel_size, axis, axis_origin, num_iterations):
+        # Prepare the geometry vector description
+        vectors = _prepare_astra_geometry(P, pixel_size, axis, axis_origin)
+
+        # Do the reconstruction with astra
+        return _reconstruct_with_astra(projections, vectors, volume, num_iterations)
+
     # Read the model
     model = read_model(model_filename)
 
@@ -383,13 +390,10 @@ def _reconstruct(
     # Put the projections in sinogram order
     projections = np.swapaxes(projections_file.data, 0, 1)
 
-    # Prepare the geometry vector description
-    vectors = _prepare_astra_geometry(
-        P, pixel_size=pixel_size, axis=axis, axis_origin=axis_origin
+    # Do the reconstruction
+    volume = recon(
+        projections, P, volume, pixel_size, axis, axis_origin, num_iterations
     )
-
-    # Do the reconstruction with astra
-    volume = _reconstruct_with_astra(projections, vectors, volume, num_iterations)
 
     # Create a new file with the reconstructed volume
     write_volume(volume_filename, volume)
