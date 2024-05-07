@@ -198,12 +198,12 @@ def _reconstruct_with_astra(
         The reconstructed volume
 
     """
-    print("Reconstructing with %d iterations" % num_iterations)
 
     # If volume is not set then initialise to zero
     if volume is None:
         volume = np.zeros(
-            (projections.shape[0], projections.shape[2], projections.shape[2])
+            (projections.shape[0], projections.shape[2], projections.shape[2]),
+            dtype="float32",
         )
 
     # Create the volume geometry
@@ -226,6 +226,7 @@ def _reconstruct_with_astra(
     volume_id = astra.data3d.create("-vol", vol_geom, volume)
 
     # Do the reconstruction
+    print("Reconstructing with %d iterations" % num_iterations)
     alg_cfg = astra.astra_dict("CGLS3D_CUDA")
     alg_cfg["ProjectionDataId"] = projections_id
     alg_cfg["ReconstructionDataId"] = volume_id
