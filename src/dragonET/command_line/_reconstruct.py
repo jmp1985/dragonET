@@ -146,19 +146,69 @@ def reconstruct(args: List[str] = None):
     reconstruct_impl(get_parser().parse_args(args=args))
 
 
-def _prepare_astra_geometry(P: np.ndarray, pixel_size: float = 1) -> np.ndarray:
+def _prepare_astra_geometry(
+    P: np.ndarray, pixel_size: float = 1, sample_axis=None
+) -> np.ndarray:
     """
     Prepare the geometry vectors
 
     Params:
         P: The array od parameters
         pixel_size: The pixel size relative to the voxel size
+        sample_axis: The sample axis to align
 
     Returns:
         The array of geometry vectors
 
     """
+
+    def matrix_to_rotate_a_onto_b(a, b):
+        # Compute the unit vectors
+        a = a / np.linalg.norm(a)
+        b = b / np.linalg.norm(b)
+
+        # Compute the matrix
+        # cos(t), -sin(t), 0
+        # sin(t), cos(t), 0
+        # 0, 0, 1
+        d_ab = np.dot(a, b)
+        c_ab = np.linalg.norm(np.cross(a, b))
+        G = np.array([[d_ab, -c_ab, 0], [c_ab, d_ab, 0], [0, 0, 1]])
+
+        # Compute the rotation matrix U such that Ua = b
+        u = a
+        v = b - np.dot(a, b) * a
+        len_v = np.linalg.norm(v)
+        if len_v > 0:
+            v = v / len_v
+            w = np.cross(b, a)
+            F = np.linalg.inv(np.stack([u, v, w]).T)
+            U = np.linalg.inv(F) @ G @ F
+        else:
+            U = np.diag((1.0, 1.0, 1.0))
+
+        # Return the rotation matrix
+        return U
+
+    def prepare_sample_alignment_rotation_and_translation(origin, direction):
+        U = matrix_to_rotate_a_onto_b(direction, np.array((0, 0, 1)))
+        return U, -origin
+
     print("Preparing geometry with pixel size %f" % pixel_size)
+
+    # Get the sample axis
+    if sample_axis is not None:
+        origin = sample_axis[0, :]
+        direction = sample_axis[1, :]
+    else:
+        origin = np.array((0, 0, 0))
+        direction = np.array((0, 0, 1))
+
+    # Prepare the transform to align the sample. The origin is wrt the centre
+    # of the volume and the direction is a unit vector. Here we compute the
+    # rotation matrix and translation that put a given line along the centre of
+    # the reconstruction volume
+    Rs, Ts = prepare_sample_alignment_rotation_and_translation(origin, direction)
 
     # The transformation
     a = np.radians(P[:, 0])  # Yaw
@@ -173,7 +223,7 @@ def _prepare_astra_geometry(P: np.ndarray, pixel_size: float = 1) -> np.ndarray:
     Rc = Rotation.from_rotvec(np.array((0, 0, 1))[None, :] * c[:, None]).as_matrix()
 
     # Need to invert the rotation matrix for astra convention
-    R = np.linalg.inv(Ra @ Rb @ Rc)
+    R = np.linalg.inv(Ra @ Rb @ Rc @ Rs.T)
 
     # Create the translation vector for each image
     t = np.stack([-shiftx, np.zeros(shiftx.size), -shifty], axis=1)
@@ -185,7 +235,7 @@ def _prepare_astra_geometry(P: np.ndarray, pixel_size: float = 1) -> np.ndarray:
     vectors[:, 0:3] = R @ (0, -1, 0)
 
     # Detector centre
-    vectors[:, 3:6] = np.einsum("...ij,...j", R, t * pixel_size)
+    vectors[:, 3:6] = (np.einsum("...ij,...j", R, t) + Ts) * pixel_size
 
     # Vector from detector pixel (0,0) to (0,1)
     vectors[:, 6:9] = R @ (pixel_size, 0, 0)
@@ -284,6 +334,8 @@ def _reconstruct(
         model_filename: The filename of the geometry model
         volume_filename: The filename of the reconstructed volume
         initial_volume_filename: The filename of the initial volume
+        volume_shape: The shape of the output volume
+        pixel_size: The pixel size on the images relative to the voxel size
         num_iterations: The number of iterations to use
 
     """
@@ -313,6 +365,9 @@ def _reconstruct(
         outfile = mrcfile.new(filename, overwrite=True)
         outfile.set_data(volume)
 
+    def normalise(v):
+        return v / np.linalg.norm(v)
+
     # Read the model
     model = read_model(model_filename)
 
@@ -325,6 +380,17 @@ def _reconstruct(
     # Get the transform from the model
     P = np.array(model["transform"], dtype=float)
 
+    # Get the vector to align to
+    if "sample_axis" in model:
+        sample_axis = np.stack(
+            [
+                model["sample_axis"]["origin"][::-1],
+                normalise(model["sample_axis"]["direction"][::-1]),
+            ]
+        )
+    else:
+        sample_axis = None
+
     # Check the input is consistent
     assert P.shape[0] == projections_file.data.shape[0]
 
@@ -332,7 +398,7 @@ def _reconstruct(
     projections = np.swapaxes(projections_file.data, 0, 1)
 
     # Prepare the geometry vector description
-    vectors = _prepare_astra_geometry(P, pixel_size=pixel_size)
+    vectors = _prepare_astra_geometry(P, pixel_size=pixel_size, sample_axis=sample_axis)
 
     # Do the reconstruction with astra
     volume = _reconstruct_with_astra(projections, vectors, volume, num_iterations)
