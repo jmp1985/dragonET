@@ -11,7 +11,6 @@ from argparse import ArgumentParser
 from typing import List
 
 import mrcfile
-import napari
 import numpy as np
 import yaml
 
@@ -74,6 +73,18 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
             """
         ),
     )
+    parser.add_argument(
+        "-m",
+        "--model",
+        type=str,
+        default=None,
+        dest="model",
+        help=(
+            """
+            A YAML file describing the geometry model.
+            """
+        ),
+    )
 
     return parser
 
@@ -92,6 +103,7 @@ def pick_impl(args):
         args.projections,
         args.contours_out,
         args.contours_in,
+        args.model,
     )
 
     # Write some timing stats
@@ -110,23 +122,33 @@ def _pick(
     projections_filename: str,
     contours_out_filename: str,
     contours_in_filename: str = None,
+    model_in_filename: str = None,
 ):
     """
     Pick the fiduccials manually
 
     """
+    import napari
 
     def read_projections(filename):
         print("Reading projections from %s" % filename)
         return mrcfile.mmap(filename)
 
     def read_contours(filename):
-        print("Reading contours from %s" % filename)
         if filename:
+            print("Reading contours from %s" % filename)
             contours = yaml.safe_load(open(filename))["contours"]
         else:
             contours = None
         return contours
+
+    def read_model(filename):
+        if filename:
+            print("Reading model from %s" % filename)
+            model = yaml.safe_load(open(filename))
+        else:
+            model = None
+        return model
 
     def write_contours(filename, contours):
         print("Writing contours to %s" % filename)
@@ -138,11 +160,20 @@ def _pick(
     # Load the projections data
     projections_file = read_projections(projections_filename)
 
-    # Add the image layer
-    viewer.add_image(projections_file.data, name="Projections")
-
     # Read the contours
     contours = read_contours(contours_in_filename)
+
+    # Read the model
+    model = read_model(model_in_filename)
+
+    P = np.array(model["transform"])
+    translate = np.zeros((P.shape[0], 3))
+    translate[:, 1] = P[:, 3]
+    translate[:, 2] = P[:, 4]
+    translatr = translate.tolist()
+
+    # Add the image layer
+    viewer.add_image(projections_file.data, name="Projections", translate=translate)
 
     # Add the contours to the viewer
     contours = sorted(contours, key=lambda x: x[0])
