@@ -89,6 +89,20 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--volume_shape",
+        type=lambda x: tuple(map(int, x.split(","))),
+        default=None,
+        dest="volume_shape",
+        help="The shape of the volume",
+    )
+    parser.add_argument(
+        "--pixel_size",
+        type=float,
+        default=1,
+        dest="pixel_size",
+        help="The pixel size relative to the voxel size",
+    )
+    parser.add_argument(
         "-n",
         "--num_iterations",
         type=int,
@@ -115,6 +129,8 @@ def reconstruct_impl(args):
         args.model,
         args.volume,
         args.initial_volume,
+        args.volume_shape,
+        args.pixel_size,
         args.num_iterations,
     )
 
@@ -130,7 +146,7 @@ def reconstruct(args: List[str] = None):
     reconstruct_impl(get_parser().parse_args(args=args))
 
 
-def _prepare_astra_geometry(P: np.ndarray, pixel_size: int = 1) -> np.ndarray:
+def _prepare_astra_geometry(P: np.ndarray, pixel_size: float = 1) -> np.ndarray:
     """
     Prepare the geometry vectors
 
@@ -142,6 +158,8 @@ def _prepare_astra_geometry(P: np.ndarray, pixel_size: int = 1) -> np.ndarray:
         The array of geometry vectors
 
     """
+    print("Preparing geometry with pixel size %f" % pixel_size)
+
     # The transformation
     a = np.radians(P[:, 0])  # Yaw
     b = np.radians(P[:, 1])  # Pitch
@@ -167,7 +185,7 @@ def _prepare_astra_geometry(P: np.ndarray, pixel_size: int = 1) -> np.ndarray:
     vectors[:, 0:3] = R @ (0, -1, 0)
 
     # Detector centre
-    vectors[:, 3:6] = np.einsum("...ij,...j", R, t)
+    vectors[:, 3:6] = np.einsum("...ij,...j", R, t * pixel_size)
 
     # Vector from detector pixel (0,0) to (0,1)
     vectors[:, 6:9] = R @ (pixel_size, 0, 0)
@@ -202,7 +220,11 @@ def _reconstruct_with_astra(
     # If volume is not set then initialise to zero
     if volume is None:
         volume = np.zeros(
-            (projections.shape[0], projections.shape[2], projections.shape[2]),
+            (
+                projections.shape[0] // 2,
+                projections.shape[2] // 2,
+                projections.shape[2] // 2,
+            ),
             dtype="float32",
         )
 
@@ -250,6 +272,8 @@ def _reconstruct(
     model_filename: str,
     volume_filename: str,
     initial_volume_filename: str = None,
+    volume_shape: tuple = None,
+    pixel_size: float = 1,
     num_iterations: int = 1,
 ):
     """
@@ -272,11 +296,14 @@ def _reconstruct(
         print("Reading projections from %s" % filename)
         return mrcfile.open(filename)
 
-    def read_volume(filename):
+    def read_volume(filename, shape):
         if filename:
             print("Reading initial volume from %s" % filename)
             volume_file = mrcfile.open(filename)
             volume = volume_file.data.copy()
+        elif shape:
+            print("Initialising volume with shape: (%d, %d, %d)" % shape)
+            volume = np.zeros(shape, dtype="float32")
         else:
             volume = None
         return volume
@@ -293,7 +320,7 @@ def _reconstruct(
     projections_file = read_projections(projections_filename)
 
     # Read in volume
-    volume = read_volume(initial_volume_filename)
+    volume = read_volume(initial_volume_filename, volume_shape)
 
     # Get the transform from the model
     P = np.array(model["transform"], dtype=float)
@@ -304,11 +331,8 @@ def _reconstruct(
     # Put the projections in sinogram order
     projections = np.swapaxes(projections_file.data, 0, 1)
 
-    # Set the size of the pixels relative to the volume voxel size
-    pixel_size = 1
-
     # Prepare the geometry vector description
-    vectors = _prepare_astra_geometry(P, pixel_size=1)
+    vectors = _prepare_astra_geometry(P, pixel_size=pixel_size)
 
     # Do the reconstruction with astra
     volume = _reconstruct_with_astra(projections, vectors, volume, num_iterations)
