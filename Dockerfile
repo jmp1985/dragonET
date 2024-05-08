@@ -10,7 +10,7 @@ RUN apt install -y g++
 RUN apt install -y python3
 RUN apt install -y python3-pip
 RUN apt install -y automake
-RUN apt install -y build-essential
+RUN apt install -y libtool
 RUN export CXX=$(which g++)
 RUN export CUDACXX=$(which nvcc)
 RUN git submodule update --init --recursive
