@@ -110,6 +110,14 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         dest="num_iterations",
         help="The number of iterations.",
     )
+    parser.add_argument(
+        "--device",
+        type=str,
+        choices=["gpu", "gpu_and_host", "host"],
+        default="gpu",
+        dest="device",
+        help="The device settings to use",
+    )
 
     return parser
 
@@ -132,6 +140,7 @@ def reconstruct_impl(args):
         args.volume_shape,
         args.pixel_size,
         args.num_iterations,
+        args.device,
     )
 
     # Write some timing stats
@@ -245,6 +254,7 @@ def _reconstruct_with_astra(
     vectors: np.ndarray,
     volume: np.ndarray = None,
     num_iterations: int = 1,
+    device: str = "gpu",
 ) -> np.ndarray:
     """
     Do the reconstruction with astra
@@ -254,6 +264,7 @@ def _reconstruct_with_astra(
         vectors: The array of geometry vectors
         volume: The initial volume
         num_iterations: The number of iterations
+        device: The device to do the reconstruction on
 
     Returns:
         The reconstructed volume
@@ -290,12 +301,31 @@ def _reconstruct_with_astra(
     projections_id = astra.data3d.create("-sino", proj_geom, projections)
     volume_id = astra.data3d.create("-vol", vol_geom, volume)
 
-    # Do the reconstruction
-    print("Reconstructing with %d iterations" % num_iterations)
-    alg_cfg = astra.astra_dict("CGLS3D_CUDA")
+    # Check the device input
+    if device not in ["gpu", "gpu_and_host", "host"]:
+        raise RuntimeError("Device must be 'gpu' or 'host', got %s" % device)
+
+    # Create the projector object
+    if device in ["gpu", "gpu_and_host"]:
+        projector_id = astra.create_projector("cuda3d", proj_geom, vol_geom)
+    elif device in ["host"]:
+        raise RuntimeError("Not implemented")
+
+    # Configure the algorithm to use.
+    if device in ["gpu"]:
+        alg_cfg = astra.astra_dict("CGLS3D_CUDA")
+    elif device in ["host", "gpu_and_host"]:
+        astra.plugin.register(astra.plugins.CGLSPlugin)
+        alg_cfg = astra.astra_dict("CGLS-PLUGIN")
+
+    # Configure the algorithm
+    alg_cfg["ProjectorId"] = projector_id
     alg_cfg["ProjectionDataId"] = projections_id
     alg_cfg["ReconstructionDataId"] = volume_id
     algorithm_id = astra.algorithm.create(alg_cfg)
+
+    # Do the reconstruction
+    print("Reconstructing with %d iterations" % num_iterations)
     astra.algorithm.run(algorithm_id, iterations=num_iterations)
 
     # Get the reconstructed volume
@@ -318,6 +348,7 @@ def _reconstruct(
     volume_shape: tuple = None,
     pixel_size: float = 1,
     num_iterations: int = 1,
+    device: str = "gpu",
 ):
     """
     Do the reconstruction
@@ -330,6 +361,7 @@ def _reconstruct(
         volume_shape: The shape of the output volume
         pixel_size: The pixel size on the images relative to the voxel size
         num_iterations: The number of iterations to use
+        device: The device to do the reconstruction on
 
     """
 
@@ -361,12 +393,16 @@ def _reconstruct(
     def normalise(v):
         return v / np.linalg.norm(v)
 
-    def recon(projections, P, volume, pixel_size, axis, axis_origin, num_iterations):
+    def recon(
+        projections, P, volume, pixel_size, axis, axis_origin, num_iterations, mode
+    ):
         # Prepare the geometry vector description
         vectors = _prepare_astra_geometry(P, pixel_size, axis, axis_origin)
 
         # Do the reconstruction with astra
-        return _reconstruct_with_astra(projections, vectors, volume, num_iterations)
+        return _reconstruct_with_astra(
+            projections, vectors, volume, num_iterations, mode
+        )
 
     # Read the model
     model = read_model(model_filename)
@@ -392,7 +428,7 @@ def _reconstruct(
 
     # Do the reconstruction
     volume = recon(
-        projections, P, volume, pixel_size, axis, axis_origin, num_iterations
+        projections, P, volume, pixel_size, axis, axis_origin, num_iterations, device
     )
 
     # Create a new file with the reconstructed volume
