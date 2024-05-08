@@ -252,7 +252,7 @@ def _prepare_astra_geometry(
 def _reconstruct_with_astra(
     projections: np.ndarray,
     vectors: np.ndarray,
-    volume: np.ndarray = None,
+    volume: np.ndarray,
     num_iterations: int = 1,
     device: str = "gpu",
 ) -> np.ndarray:
@@ -270,17 +270,6 @@ def _reconstruct_with_astra(
         The reconstructed volume
 
     """
-
-    # If volume is not set then initialise to zero
-    if volume is None:
-        volume = np.zeros(
-            (
-                projections.shape[0] // 2,
-                projections.shape[2] // 2,
-                projections.shape[2] // 2,
-            ),
-            dtype="float32",
-        )
 
     # Create the volume geometry
     vol_geom = astra.create_vol_geom(
@@ -373,7 +362,7 @@ def _reconstruct(
         print("Reading projections from %s" % filename)
         return mrcfile.mmap(filename)
 
-    def read_volume(filename, shape):
+    def init_volume(filename, shape):
         if filename:
             print("Reading initial volume from %s" % filename)
             volume_file = mrcfile.open(filename)
@@ -393,6 +382,13 @@ def _reconstruct(
     def normalise(v):
         return v / np.linalg.norm(v)
 
+    def volume_shape_from_projections_shape(shape):
+        return (
+            shape[0] // 2,
+            shape[2] // 2,
+            shape[2] // 2,
+        )
+
     def recon(
         projections, P, volume, pixel_size, axis, axis_origin, num_iterations, mode
     ):
@@ -410,21 +406,26 @@ def _reconstruct(
     # Read the projections data
     projections_file = read_projections(projections_filename)
 
-    # Read in volume
-    volume = read_volume(initial_volume_filename, volume_shape)
-
     # Get the transform from the model
     P = np.array(model["transform"], dtype=float)
+
+    # Check the input is consistent
+    assert P.shape[0] == projections_file.data.shape[0]
 
     # Get the vector to align to
     axis = np.array(normalise(model.get("axis", (1, 0, 0)))[::-1])
     axis_origin = np.array(model.get("axis_origin", (0, 0, 0))[::-1])
 
-    # Check the input is consistent
-    assert P.shape[0] == projections_file.data.shape[0]
-
     # Put the projections in sinogram order
     projections = np.swapaxes(projections_file.data, 0, 1)
+
+    # Initialise the volume shape if not provided
+    if volume_shape is None:
+        volume_shape = volume_shape_from_projections_shape(projections.shape)
+
+    # Initialise the volume. If a file is given, that is used as the volume.
+    # Otherwise, initialise a volume of zeros of the desired share
+    volume = init_volume(initial_volume_filename, volume_shape)
 
     # Do the reconstruction
     volume = recon(
