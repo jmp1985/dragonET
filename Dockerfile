@@ -20,5 +20,6 @@ RUN ./autogen.sh   # when building a git version
 RUN ./configure --with-cuda=/usr/local/cuda --with-python --with-install-type=module --prefix=$(dirname $(which python))
 RUN make
 RUN make install
+RUN cd ../..
 
 RUN pip install .
