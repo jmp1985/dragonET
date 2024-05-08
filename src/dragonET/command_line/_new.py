@@ -78,7 +78,7 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         type=float,
         default=0,
         dest="global_rotation",
-        help="The global in plane rotation",
+        help="The global in plane rotation (degrees)",
     )
 
     return parser
@@ -148,9 +148,6 @@ def _new(
     # Set the image size
     image_size = projections_file.data.shape[1:]
 
-    # Set the axis origin
-    axis_origin = [image_size[1] / 2, image_size[0] / 2, image_size[1] / 2]
-
     # Construct the transform
     transform = np.zeros((angles.size, 5))
     transform[:, 0] = global_rotation
@@ -158,7 +155,8 @@ def _new(
 
     # Construct the model dictionary
     model = {
-        "axis_origin": axis_origin,
+        "axis_origin": (0, 0, 0),
+        "axis": (1, 0, 0),
         "image_size": image_size,
         "transform": transform.tolist(),
     }
