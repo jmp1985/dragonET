@@ -9,6 +9,7 @@ RUN apt install -y libfftw3-dev
 RUN apt install -y g++
 RUN apt install -y python3
 RUN apt install -y python3-pip
+RUN apt install -y python-is-python3
 RUN apt install -y automake
 RUN apt install -y libtool
 RUN export CXX=$(which g++)
