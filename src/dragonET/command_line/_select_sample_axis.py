@@ -134,6 +134,33 @@ def _select_sample_axis(
             v = v / n
         return v
 
+    def get_points(layers):
+        p1 = np.array((0, 0, 0))
+        p2 = np.array((1, 0, 0))
+        for layer in layers:
+            if isinstance(layer, napari.layers.Points):
+                points = layer.data
+                if points.shape[0] == 0:
+                    print("- Warning: no points in layer")
+                elif points.shape[0] == 1:
+                    print("- Warning: only 1 point in layer")
+                else:
+                    p1 = points[0, :]
+                    p2 = points[1, :]
+                    print("Point 1: %f, %f, %f" % tuple(p1))
+                    print("Point 2: %f, %f, %f" % tuple(p2))
+                    p1 = p1 - np.array(volume_file.data.shape) / 2
+                    p2 = p2 - np.array(volume_file.data.shape) / 2
+                    break
+        return [p1, p2]
+
+    def compute_axis_and_origin(points):
+        p1, p2 = points
+        axis = normalise(p2 - p1)
+        t = -p1[0] / axis[0]
+        axis_origin = t * axis + p1
+        return axis, axis_origin
+
     # Initialise the viewer
     viewer = napari.Viewer()
 
@@ -149,29 +176,8 @@ def _select_sample_axis(
     # Start Napari
     napari.run()
 
-    # Get the points layers
-    p1 = np.array((0, 0, 0))
-    p2 = np.array((1, 0, 0))
-    for layer in viewer.layers:
-        if isinstance(layer, napari.layers.Points):
-            points = layer.data
-            if points.shape[0] == 0:
-                print("- Warning: no points in layer")
-            elif points.shape[0] == 1:
-                print("- Warning: only 1 point in layer")
-            else:
-                p1 = points[0, :]
-                p2 = points[1, :]
-                print("Point 1: %f, %f, %f" % tuple(p1))
-                print("Point 2: %f, %f, %f" % tuple(p2))
-                p1 = p1 - np.array(volume_file.data.shape) / 2
-                p2 = p2 - np.array(volume_file.data.shape) / 2
-                break
-
     # Compute origin and direction
-    axis = normalise(p2 - p1)
-    t = -p1[0] / axis[0]
-    axis_origin = t * axis + p1
+    axis, axis_origin = compute_axis_and_origin(get_points(viewer.layers))
     print("Axis: %f, %f, %f" % tuple(axis))
     print("Axis origin: %f, %f, %f" % tuple(axis_origin))
 
