@@ -371,7 +371,7 @@ def _reconstruct(
 
     def read_projections(filename):
         print("Reading projections from %s" % filename)
-        return mrcfile.open(filename)
+        return mrcfile.mmap(filename)
 
     def read_volume(filename, shape):
         if filename:
