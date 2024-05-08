@@ -162,7 +162,7 @@ def _prepare_astra_geometry(
     Prepare the geometry vectors
 
     Params:
-        P: The array od parameters
+        P: The array of parameters
         pixel_size: The pixel size relative to the voxel size
         axis: The sample axis to align
         axis_origin: The sample axis origin to align
