@@ -15,11 +15,13 @@ RUN git submodule update --init --recursive
 
 RUN git clone https://github.com/astra-toolbox/astra-toolbox.git
 RUN cd astra-toolbox
-RUN cd build/linux
+RUN cd build
+RUN cd linux
 RUN ./autogen.sh   # when building a git version
 RUN ./configure --with-cuda=/usr/local/cuda --with-python --with-install-type=module --prefix=$(dirname $(which python))
 RUN make
 RUN make install
-RUN cd ../..
+RUN cd ..
+RUN cd ..
 
 RUN pip install .
