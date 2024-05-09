@@ -263,20 +263,30 @@ def residuals(
     # Unflatten the parameters
     P, X = unflatten_parameters(params, P_shape, X_shape)
 
+    # The transformation
+    a = P[:, 0]  # Yaw
+    b = P[:, 1]  # Pitch
+    c = P[:, 2]  # Roll
+    shifty = P[:, 3]  # Shift Y
+    shiftx = P[:, 4]  # Shift X
+
+    # Create the translation vector for each image
+    T = np.stack([np.zeros(shiftx.size), shifty, shiftx], axis=1)
+
     # Construct the matrices
     R = np.zeros((P.shape[0], 3, 3))
-    T = np.zeros((P.shape[0], 3))
-    for i in range(P.shape[0]):
-        # Get the parameters
-        yaw, pitch, roll, shifty, shiftx = P[i]
 
+    # Need to invert the rotation matrix for astra convention
+    R = np.linalg.inv(Ra @ Rb @ Rc @ Rs.T)
+
+    for i in range(P.shape[0]):
         # Cos and sin of yaw, pitch and roll
-        cosa = np.cos(yaw)
-        sina = np.sin(yaw)
-        cosb = np.cos(pitch)
-        sinb = np.sin(pitch)
-        cosc = np.cos(roll)
-        sinc = np.sin(roll)
+        cosa = np.cos(a[i])
+        sina = np.sin(a[i])
+        cosb = np.cos(b[i])
+        sinb = np.sin(b[i])
+        cosc = np.cos(c[i])
+        sinc = np.sin(c[i])
 
         # Yaw rotation matrix
         Ra = np.array([[1, 0, 0], [0, cosa, -sina], [0, sina, cosa]])
@@ -289,9 +299,6 @@ def residuals(
 
         # The full rotation matrix
         R[i] = Ra @ Rb @ Rc
-
-        # The translation
-        T[i] = np.array([0, shifty, shiftx])
 
     # Compute the residuals
     r = np.zeros((contours.shape[0], 2))
