@@ -285,11 +285,11 @@ def residuals(
     # The full rotation matrix
     R = Ra @ Rb @ Rc
 
-    # Get index, z, y and x
-    index = contours["index"]
-    z = contours["z"]
-    y_obs = contours["y"]
-    x_obs = contours["x"]
+    # Get index, z, y and x from the contours
+    index = contours["index"]  # Point index
+    z = contours["z"]  # Image number
+    y_obs = contours["y"]  # Observed y coordinate on image
+    x_obs = contours["x"]  # Observed x coordinate on image
 
     # Compute the residuals
     p = np.einsum("...ij,...j", R[z], X[index]) + T[z] + centre
@@ -369,46 +369,46 @@ def jacobian(
     dR_db = Ra @ dRb_db @ Rc
     dR_dc = Ra @ Rb @ dRc_dc
 
+    # Get index, z, y and x from the contours
+    index = contours["index"]  # Point index
+    z = contours["z"]  # Image number
+    y_obs = contours["y"]  # Observed y coordinate on image
+    x_obs = contours["x"]  # Observed x coordinate on image
+
+    # Derivatives of p wrt to rotations
+    dp_da = np.einsum("...ij,...j", dR_da[z], X[index])
+    dp_db = np.einsum("...ij,...j", dR_db[z], X[index])
+    dp_dc = np.einsum("...ij,...j", dR_dc[z], X[index])
+
+    # Derivatives of p wrt to point parameters
+    dp_dX0 = R[z, :, 0]  # R[z] @ dp0_dX0 = R[z] @ (1, 0, 0)
+    dp_dX1 = R[z, :, 1]  # R[z] @ dp0_dX1 = R[z] @ (0, 1, 0)
+    dp_dX2 = R[z, :, 2]  # R[z] @ dp0_dX2 = R[z] @ (0, 0, 1)
+
     # Compute the elements of the Jacobian
     JP = np.zeros((contours.shape[0], 2, P.shape[0], P.shape[1]))
     JX = np.zeros((contours.shape[0], 2, X.shape[0], X.shape[1]))
-    for j in range(contours.shape[0]):
-        # Get the observations
-        index, z, y_obs, x_obs = contours[j]
 
-        # Derivatives of p wrt to rotation matrix
-        dp_da = dR_da[z] @ X[index]
-        dp_db = dR_db[z] @ X[index]
-        dp_dc = dR_dc[z] @ X[index]
+    # Derivatives wrt image parameters
+    i = np.arange(z.size)
+    JP[i, 0, z, 0] = dp_da[i, 2]  # dy_prd_da = dp_da . (0, 0, 1)
+    JP[i, 0, z, 1] = dp_db[i, 2]  # dy_prd_db = dp_db . (0, 0, 1)
+    JP[i, 0, z, 2] = dp_dc[i, 2]  # dy_prd_dc = dp_dc . (0, 0, 1)
+    JP[i, 0, z, 3] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
+    JP[i, 0, z, 4] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
+    JP[i, 1, z, 0] = dp_da[i, 0]  # dx_prd_da = dp_da . (1, 0, 0)
+    JP[i, 1, z, 1] = dp_db[i, 0]  # dx_prd_db = dp_db . (1, 0, 0)
+    JP[i, 1, z, 2] = dp_dc[i, 0]  # dx_prd_dc = dp_dc . (1, 0, 0)
+    JP[i, 1, z, 3] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
+    JP[i, 1, z, 4] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
 
-        # Derivatives of p wrt to point parameters
-        dp_dX0 = R[z][:, 0]  # R[z] @ dp0_dX0 = R[z] @ (1, 0, 0)
-        dp_dX1 = R[z][:, 1]  # R[z] @ dp0_dX1 = R[z] @ (0, 1, 0)
-        dp_dX2 = R[z][:, 2]  # R[z] @ dp0_dX2 = R[z] @ (0, 0, 1)
-
-        dp_dO0 = -R[z][:, 0] + np.array((1, 0, 0))  # -R[z] @ dO_dO0 + dO_dO0
-        dp_dO1 = -R[z][:, 1] + np.array((0, 1, 0))  # -R[z] @ dO_dO1 + dO_dO1
-        dp_dO2 = -R[z][:, 2] + np.array((0, 0, 1))  # -R[z] @ dO_dO2 + dO_dO2
-
-        # Derivatives wrt image parameters
-        JP[j, 0, z, 0] = dp_da[2]  # dy_prd_da = dp_da . (0, 0, 1)
-        JP[j, 0, z, 1] = dp_db[2]  # dy_prd_db = dp_db . (0, 0, 1)
-        JP[j, 0, z, 2] = dp_dc[2]  # dy_prd_dc = dp_dc . (0, 0, 1)
-        JP[j, 0, z, 3] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
-        JP[j, 0, z, 4] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
-        JP[j, 1, z, 0] = dp_da[0]  # dx_prd_da = dp_da . (1, 0, 0)
-        JP[j, 1, z, 1] = dp_db[0]  # dx_prd_db = dp_db . (1, 0, 0)
-        JP[j, 1, z, 2] = dp_dc[0]  # dx_prd_dc = dp_dc . (1, 0, 0)
-        JP[j, 1, z, 3] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
-        JP[j, 1, z, 4] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
-
-        # Derivatives wrt point parameters
-        JX[j, 0, index, 0] = dp_dX0[2]  # dy_prd_dX0 = dp_dX0 . (0, 0, 1)
-        JX[j, 0, index, 1] = dp_dX1[2]  # dy_prd_dX1 = dp_dX1 . (0, 0, 1)
-        JX[j, 0, index, 2] = dp_dX2[2]  # dy_prd_dX2 = dp_dX2 . (0, 0, 1)
-        JX[j, 1, index, 0] = dp_dX0[0]  # dx_prd_dX0 = dp_dX0 . (1, 0, 0)
-        JX[j, 1, index, 1] = dp_dX1[0]  # dx_prd_dX1 = dp_dX1 . (1, 0, 0)
-        JX[j, 1, index, 2] = dp_dX2[0]  # dx_prd_dX2 = dp_dX2 . (1, 0, 0)
+    # Derivatives wrt point parameters
+    JX[i, 0, index, 0] = dp_dX0[i, 2]  # dy_prd_dX0 = dp_dX0 . (0, 0, 1)
+    JX[i, 0, index, 1] = dp_dX1[i, 2]  # dy_prd_dX1 = dp_dX1 . (0, 0, 1)
+    JX[i, 0, index, 2] = dp_dX2[i, 2]  # dy_prd_dX2 = dp_dX2 . (0, 0, 1)
+    JX[i, 1, index, 0] = dp_dX0[i, 0]  # dx_prd_dX0 = dp_dX0 . (1, 0, 0)
+    JX[i, 1, index, 1] = dp_dX1[i, 0]  # dx_prd_dX1 = dp_dX1 . (1, 0, 0)
+    JX[i, 1, index, 2] = dp_dX2[i, 0]  # dx_prd_dX2 = dp_dX2 . (1, 0, 0)
 
     # Return the Jacobian
     JP = JP.reshape((contours.shape[0] * 2, P.size))
