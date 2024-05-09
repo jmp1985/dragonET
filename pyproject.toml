@@ -69,6 +69,10 @@ dynamic = [
 #
 [project.optional-dependencies]
 
+all = [
+  "napari[all]",
+]
+
 test = [
   "pytest",
   "pytest-cov",
