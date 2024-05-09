@@ -75,7 +75,7 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
     parser.add_argument(
         "--model_out",
         type=str,
-        default="refined.csv",
+        default="refined_model.yaml",
         dest="model_out",
         help=(
             """
@@ -111,13 +111,6 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         dest="nbatch_cycles",
         help="Set the number of batch cycles to perform before global optimization",
     )
-    parser.add_argument(
-        "--kappa",
-        type=float,
-        default=1,
-        dest="kappa",
-        help="The regularisation for the pitch and roll.",
-    )
 
     return parser
 
@@ -141,7 +134,6 @@ def refine_impl(args):
         args.refine_roll,
         args.batch_size,
         args.nbatch_cycles,
-        args.kappa,
     )
 
     # Write some timing stats
@@ -168,6 +160,8 @@ def unflatten_parameters(params, P_shape, X_shape):
 
 
 def make_bounds(P, X, reference_image=None, refine_pitch=False, refine_roll=False):
+    yaw = 30
+
     if refine_pitch:
         pitch = 90
     else:
@@ -180,19 +174,19 @@ def make_bounds(P, X, reference_image=None, refine_pitch=False, refine_roll=Fals
 
     # P lower bounds
     P_lower = np.zeros_like(P)
-    P_lower[:, 0] = np.radians(-90)  # Yaw
-    P_lower[:, 1] = np.radians(-pitch)  # Pitch
+    P_lower[:, 0] = P[:, 0] - np.radians(yaw)  # Yaw
+    P_lower[:, 1] = P[:, 1] - np.radians(pitch)  # Pitch
     P_lower[:, 2] = P[:, 2] - np.radians(roll)  # Roll
-    P_lower[:, 3] = -512 * 8  # Y
-    P_lower[:, 4] = -512 * 8  # X
+    P_lower[:, 3] = -2048  # Y
+    P_lower[:, 4] = -2048  # X
 
     # P upper bounds
     P_upper = np.zeros_like(P)
-    P_upper[:, 0] = np.radians(90)  # Yaw
-    P_upper[:, 1] = np.radians(pitch)  # Pitch
+    P_upper[:, 0] = P[:, 0] + np.radians(yaw)  # Yaw
+    P_upper[:, 1] = P[:, 1] + np.radians(pitch)  # Pitch
     P_upper[:, 2] = P[:, 2] + np.radians(roll)  # Roll
-    P_upper[:, 3] = 512 * 8  # Y
-    P_upper[:, 4] = 512 * 8  # X
+    P_upper[:, 3] = 2048  # Y
+    P_upper[:, 4] = 2048  # X
 
     # Set the reference image parameters
     # if reference_image:
@@ -203,11 +197,11 @@ def make_bounds(P, X, reference_image=None, refine_pitch=False, refine_roll=Fals
 
     # X lower bounds
     X_lower = np.zeros_like(X)
-    X_lower[:, :] = -512 * 8
+    X_lower[:, :] = -2048
 
     # X upper bounds
     X_upper = np.zeros_like(X)
-    X_upper[:, :] = 512 * 8
+    X_upper[:, :] = 2048
 
     # Lower and upper bounds
     lower = np.concatenate([P_lower.flatten(), X_lower.flatten()])
@@ -217,13 +211,53 @@ def make_bounds(P, X, reference_image=None, refine_pitch=False, refine_roll=Fals
     return lower, upper
 
 
+# class Manager(object):
+
+#     def __init__(self, a=None, b=None, c=None, dy=None, dx=None):
+#         self.a = a
+#         self.b = b
+#         self.c = c
+#         self.dy = dy
+#         self.dx = dx
+
+#     def unflatten_parameters(self, params):
+#         P = np.zeros((num_images, 5))
+#         X = np.zeros((num_points, 3))
+#         if self.a:
+#             P[:,0] = self.a
+#         else:
+#             P[:,0] = params[:,num_images]
+
+#         if self.b:
+#             P[:,1] = self.b
+#         else:
+#             P[:,1] = params[:,num_images]
+
+#         if self.c:
+#             P[:,2] = self.c
+#         if self.dy:
+#             P[:,3] = self.dy
+#         if self.dx:
+#             P[:,4] = self.dx
+
+#         return P, X
+
+
+# def residuals(
+#     params,
+#     P_shape=None,
+#     X_shape=None,
+#     origin=None,
+#     contours=None,
+#     manager=None):
+#     P, X = manager.unflatten_parameters(params)
+
+
 def residuals(
     params,
     P_shape=None,
     X_shape=None,
     origin=None,
-    theta=None,
-    kappa=None,
     contours=None,
 ):
     # Unflatten the parameters
@@ -267,14 +301,8 @@ def residuals(
         r[j][0] = p[1] - y_obs  # (p . (0, 1, 0)) - y_obs
         r[j][1] = p[2] - x_obs  # (p . (0, 0, 1)) - x_obs
 
-    # Compute the constraints
-    cb = (kappa * 180 / np.pi) * P[:, 1]  # Prefer values close to zero for pitch
-    cc = (kappa * 180 / np.pi) * (
-        P[:, 2] - theta
-    )  # Prefer values close to tilts for roll
-
-    print(np.mean(r**2))
-    return np.concatenate([r.flatten(), cb, cc])
+    print(np.sqrt(np.mean(r**2)))
+    return r.flatten()
 
 
 def jacobian(
@@ -282,8 +310,6 @@ def jacobian(
     P_shape=None,
     X_shape=None,
     origin=None,
-    theta=None,
-    kappa=None,
     contours=None,
 ):
     # Unflatten the parameters
@@ -374,30 +400,18 @@ def jacobian(
         JX[j, 1, index, 1] = dp_dX1[2]  # dx_prd_dX1 = dp_dX1 . (0, 0, 1)
         JX[j, 1, index, 2] = dp_dX2[2]  # dx_prd_dX2 = dp_dX2 . (0, 0, 1)
 
-    # Compute elements of the Jacobian for constraints
-    JCP = np.zeros((P.shape[0] * 2, P.shape[0], P.shape[1]))
-    JCX = np.zeros((P.shape[0] * 2, X.shape[0], X.shape[1]))
-    i = np.arange(P.shape[0])
-    JCP[i, i, 1] = kappa * 180 / np.pi  # dcb_db
-    JCP[i + P.shape[0], i, 2] = kappa * 180 / np.pi  # dcc_dc
-    JCP = JCP.reshape((P.shape[0] * 2, P.size))
-    JCX = JCX.reshape((P.shape[0] * 2, X.size))
-    JC = np.concatenate([JCP, JCX], axis=1)
-
     # Return the Jacobian
     JP = JP.reshape((contours.shape[0] * 2, P.size))
     JX = JX.reshape((contours.shape[0] * 2, X.size))
     J = np.concatenate([JP, JX], axis=1)
-    return np.concatenate([J, JC], axis=0)
+    return J
 
 
 def estimate(
     P,
     X,
     contours,
-    angles,
     origin,
-    kappa,
     reference_image=None,
     refine_pitch=False,
     refine_roll=False,
@@ -413,8 +427,6 @@ def estimate(
         "P_shape": P.shape,
         "X_shape": X.shape,
         "origin": origin,
-        "theta": angles,
-        "kappa": kappa,
         "contours": contours,
     }
 
@@ -423,10 +435,12 @@ def estimate(
         residuals, params, jac=jacobian, bounds=(lower, upper), kwargs=kwargs
     )
 
+    rmsd = np.sqrt(result.cost / len(contours))
+
     # Unflatten the parameters
     P, X = unflatten_parameters(result.x, P.shape, X.shape)
 
-    return P, X
+    return P, X, rmsd
 
 
 def read_points(filename) -> dict:
@@ -435,16 +449,6 @@ def read_points(filename) -> dict:
 
 def read_model(filename) -> dict:
     return yaml.safe_load(open(filename, "r"))
-    # model = np.loadtxt(filename, delimiter=",")
-    #     assertif len(model.shape) == 1:
-    #         P = np.zeros((model.shape[0], 5))
-    #         P[:, 2] = np.radians(model)  # Roll angles are the known tilt angles
-    #     else:
-    #         P = model
-    #         # P[:, 0] = np.radians(P[:,0])
-    #         # P[:, 1] = np.radians(P[:,1])
-    #         # P[:, 2] = np.radians(P[:,2])
-    # return P
 
 
 def write_points(points, filename):
@@ -464,7 +468,6 @@ def _refine(
     refine_roll: bool = False,
     batch_size: int = 10,
     nbatch_cycles: int = 2,
-    kappa: float = 10,
 ):
     # Read the model
     model = read_model(model_in)
@@ -488,7 +491,8 @@ def _refine(
     angles = P[:, 2]  # Tilt angles are the roll angles
 
     # The origin in sample space
-    origin = np.array(model["axis_origin"], dtype=float)
+    ysize, xsize = model["image_size"]
+    origin = np.array([xsize, ysize, xsize], dtype=float)
 
     # Set the reference image
     reference_image = np.argmin(angles**2)
@@ -514,43 +518,39 @@ def _refine(
         # Perform a number of initial batch cycles prior to global optimisation
         for cycle in range(nbatch_cycles):
             # Loop through all batches of images
-            for batch0 in np.arange(0, num_images, batch_size // 2):
-                batch1 = batch0 + batch_size
+            for batch0 in np.arange(0, num_images, 1):  # batch_size // 2):
+                batch1 = batch0 + 2  # batch_size
                 select = (contours["z"] >= batch0) & (contours["z"] < batch1)
                 contours2 = contours[select]
                 contours2["z"] = contours2["z"] - contours2["z"].min()
-                angles2 = angles[batch0:batch1]
                 P2 = P[batch0:batch1]
-                P2, X = estimate(P2, X, contours2, angles2, origin, kappa)
+                P2, X, rmsd = estimate(P2, X, contours2, origin, reference_image=0)
                 P[batch0:batch1] = P2
+                print(batch0, rmsd)
 
     print("All")
-    P, X = estimate(
+    P, X, rmsd = estimate(
         P,
         X,
         contours,
-        angles,
         origin,
-        kappa,
         reference_image,
-        refine_pitch=True,
+        refine_pitch=False,
     )
 
     if refine_pitch:
         print("With pitch")
-        P, X = estimate(
-            P, X, contours, angles, origin, kappa, reference_image, refine_pitch=True
+        P, X, rmsd = estimate(
+            P, X, contours, origin, reference_image, refine_pitch=True
         )
 
     if refine_roll:
         print("With roll")
-        P, X = estimate(
+        P, X, rmsd = estimate(
             P,
             X,
             contours,
-            angles,
             origin,
-            kappa,
             reference_image,
             refine_pitch=True,
             refine_roll=True,
