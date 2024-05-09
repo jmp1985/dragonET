@@ -257,7 +257,7 @@ def residuals(
     params,
     P_shape=None,
     X_shape=None,
-    origin=None,
+    I_shape=None,
     contours=None,
 ):
     # Unflatten the parameters
@@ -269,6 +269,9 @@ def residuals(
     c = P[:, 2]  # Roll
     shifty = P[:, 3]  # Shift Y
     shiftx = P[:, 4]  # Shift X
+
+    # The centre of the image
+    centre = np.array([I_shape[1] / 2, 0, I_shape[0] / 2])
 
     # Create the translation vector for each image
     T = np.stack([shiftx, np.zeros(shiftx.size), shifty], axis=1)
@@ -301,7 +304,7 @@ def residuals(
     r = np.zeros((contours.shape[0], 2))
     for j in range(r.shape[0]):
         index, z, y_obs, x_obs = contours[j]
-        p = (R[z] @ (X[index] - origin)) + origin + T[z]
+        p = R[z] @ X[index] + T[z] + centre
         r[j][0] = p[2] - y_obs  # (p . (0, 0, 1)) - y_obs
         r[j][1] = p[0] - x_obs  # (p . (1, 0, 0)) - x_obs
 
@@ -313,7 +316,7 @@ def jacobian(
     params,
     P_shape=None,
     X_shape=None,
-    origin=None,
+    I_shape=None,
     contours=None,
 ):
     # Unflatten the parameters
@@ -370,9 +373,9 @@ def jacobian(
         index, z, y_obs, x_obs = contours[j]
 
         # Derivatives of p wrt to rotation matrix
-        dp_da = dR_da[z] @ (X[index] - origin)
-        dp_db = dR_db[z] @ (X[index] - origin)
-        dp_dc = dR_dc[z] @ (X[index] - origin)
+        dp_da = dR_da[z] @ X[index]
+        dp_db = dR_db[z] @ X[index]
+        dp_dc = dR_dc[z] @ X[index]
 
         # Derivatives of p wrt to point parameters
         dp_dX0 = R[z][:, 0]  # R[z] @ dp0_dX0 = R[z] @ (1, 0, 0)
@@ -414,7 +417,7 @@ def estimate(
     P,
     X,
     contours,
-    origin,
+    image_size,
     reference_image=None,
     refine_pitch=False,
     refine_roll=False,
@@ -429,7 +432,7 @@ def estimate(
     kwargs = {
         "P_shape": P.shape,
         "X_shape": X.shape,
-        "origin": origin,
+        "I_shape": image_size,
         "contours": contours,
     }
 
@@ -493,9 +496,8 @@ def _refine(
     # Get the initial angles
     angles = P[:, 2]  # Tilt angles are the roll angles
 
-    # The origin in sample space
-    ysize, xsize = model["image_size"]
-    origin = np.array([xsize, ysize, xsize], dtype=float)
+    # The image size
+    image_size = model["image_size"]
 
     # Set the reference image
     reference_image = np.argmin(angles**2)
@@ -514,9 +516,6 @@ def _refine(
     else:
         # Initialise the point parameters
         X = np.zeros((num_points, 3))
-        X[:, 0] = origin[0]
-        X[:, 1] = origin[1]
-        X[:, 2] = origin[2]
 
         # Perform a number of initial batch cycles prior to global optimisation
         for cycle in range(nbatch_cycles):
@@ -527,7 +526,7 @@ def _refine(
                 contours2 = contours[select]
                 contours2["z"] = contours2["z"] - contours2["z"].min()
                 P2 = P[batch0:batch1]
-                P2, X, rmsd = estimate(P2, X, contours2, origin, reference_image=0)
+                P2, X, rmsd = estimate(P2, X, contours2, image_size, reference_image=0)
                 P[batch0:batch1] = P2
                 print(batch0, rmsd)
 
@@ -536,7 +535,7 @@ def _refine(
         P,
         X,
         contours,
-        origin,
+        image_size,
         reference_image,
         refine_pitch=False,
     )
@@ -544,7 +543,7 @@ def _refine(
     if refine_pitch:
         print("With pitch")
         P, X, rmsd = estimate(
-            P, X, contours, origin, reference_image, refine_pitch=True
+            P, X, contours, image_size, reference_image, refine_pitch=True
         )
 
     if refine_roll:
@@ -553,7 +552,7 @@ def _refine(
             P,
             X,
             contours,
-            origin,
+            image_size,
             reference_image,
             refine_pitch=True,
             refine_roll=True,
