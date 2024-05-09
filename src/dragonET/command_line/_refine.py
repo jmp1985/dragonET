@@ -178,31 +178,35 @@ def make_bounds(P, X, reference_image=None, refine_pitch=False, refine_roll=Fals
     P_lower[:, 0] = P[:, 0] - np.radians(yaw)  # Yaw
     P_lower[:, 1] = P[:, 1] - np.radians(pitch)  # Pitch
     P_lower[:, 2] = P[:, 2] - np.radians(roll)  # Roll
-    P_lower[:, 3] = -2048  # Y
-    P_lower[:, 4] = -2048  # X
+    P_lower[:, 3] = -4096  # Y
+    P_lower[:, 4] = -4096  # X
 
     # P upper bounds
     P_upper = np.zeros_like(P)
     P_upper[:, 0] = P[:, 0] + np.radians(yaw)  # Yaw
     P_upper[:, 1] = P[:, 1] + np.radians(pitch)  # Pitch
     P_upper[:, 2] = P[:, 2] + np.radians(roll)  # Roll
-    P_upper[:, 3] = 2048  # Y
-    P_upper[:, 4] = 2048  # X
+    P_upper[:, 3] = 4096  # Y
+    P_upper[:, 4] = 4096  # X
 
     # Set the reference image parameters
-    # if reference_image:
-    # P_lower[reference_image, 1] = -1e-10
-    # P_lower[reference_image, 2] = P[reference_image, 2] - 1e-7
-    # P_upper[reference_image, 1] = 1e-10
-    # P_upper[reference_image, 2] = P[reference_image, 2] + 1e-7
+    if reference_image:
+        P_lower[reference_image, 1] = P[reference_image, 1] - 1e-7
+        P_lower[reference_image, 2] = P[reference_image, 2] - 1e-7
+        # P_lower[reference_image, 3] = P[reference_image, 3] - 1e-7
+        # P_lower[reference_image, 4] = P[reference_image, 4] - 1e-7
+        P_upper[reference_image, 1] = P[reference_image, 1] + 1e-7
+        P_upper[reference_image, 2] = P[reference_image, 2] + 1e-7
+        # P_upper[reference_image, 3] = P[reference_image, 3] + 1e-7
+        # P_upper[reference_image, 4] = P[reference_image, 4] + 1e-7
 
     # X lower bounds
     X_lower = np.zeros_like(X)
-    X_lower[:, :] = -2048
+    X_lower[:, :] = -4096
 
     # X upper bounds
     X_upper = np.zeros_like(X)
-    X_upper[:, :] = 2048
+    X_upper[:, :] = 4096
 
     # Lower and upper bounds
     lower = np.concatenate([P_lower.flatten(), X_lower.flatten()])
@@ -261,6 +265,11 @@ def residuals(
     image_size=None,
     contours=None,
 ):
+    """
+    Coordinate system Z, Y, X in volume space
+
+    """
+
     # Unflatten the parameters
     P, X = unflatten_parameters(params, P_shape, X_shape)
 
@@ -385,7 +394,7 @@ def jacobian(
     dp_dX1 = R[z, :, 1]  # R[z] @ dp0_dX1 = R[z] @ (0, 1, 0)
     dp_dX2 = R[z, :, 2]  # R[z] @ dp0_dX2 = R[z] @ (0, 0, 1)
 
-    # Compute the elements of the Jacobian
+    # Initialise the elements of the Jacobian
     JP = np.zeros((contours.shape[0], 2, P.shape[0], P.shape[1]))
     JX = np.zeros((contours.shape[0], 2, X.shape[0], X.shape[1]))
 
