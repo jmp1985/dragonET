@@ -285,13 +285,17 @@ def residuals(
     # The full rotation matrix
     R = Ra @ Rb @ Rc
 
+    # Get index, z, y and x
+    index = contours["index"]
+    z = contours["z"]
+    y_obs = contours["y"]
+    x_obs = contours["x"]
+
     # Compute the residuals
+    p = np.einsum("...ij,...j", R[z], X[index]) + T[z] + centre
     r = np.zeros((contours.shape[0], 2))
-    for j in range(r.shape[0]):
-        index, z, y_obs, x_obs = contours[j]
-        p = R[z] @ X[index] + T[z] + centre
-        r[j][0] = p[2] - y_obs  # (p . (0, 0, 1)) - y_obs
-        r[j][1] = p[0] - x_obs  # (p . (1, 0, 0)) - x_obs
+    r[:, 0] = p[:, 2] - y_obs  # (p . (0, 0, 1)) - y_obs
+    r[:, 1] = p[:, 0] - x_obs  # (p . (1, 0, 0)) - x_obs
 
     print(np.sqrt(np.mean(r**2)))
     return r.flatten()
