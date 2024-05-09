@@ -271,13 +271,10 @@ def residuals(
     shiftx = P[:, 4]  # Shift X
 
     # Create the translation vector for each image
-    T = np.stack([np.zeros(shiftx.size), shifty, shiftx], axis=1)
+    T = np.stack([shiftx, np.zeros(shiftx.size), shifty], axis=1)
 
     # Construct the matrices
     R = np.zeros((P.shape[0], 3, 3))
-
-    # Need to invert the rotation matrix for astra convention
-    R = np.linalg.inv(Ra @ Rb @ Rc @ Rs.T)
 
     for i in range(P.shape[0]):
         # Cos and sin of yaw, pitch and roll
@@ -289,13 +286,13 @@ def residuals(
         sinc = np.sin(c[i])
 
         # Yaw rotation matrix
-        Ra = np.array([[1, 0, 0], [0, cosa, -sina], [0, sina, cosa]])
+        Ra = np.array([[cosa, 0, sina], [0, 1, 0], [-sina, 0, cosa]])
 
         # Pitch rotation matrix
-        Rb = np.array([[cosb, -sinb, 0], [sinb, cosb, 0], [0, 0, 1]])
+        Rb = np.array([[1, 0, 0], [0, cosb, -sinb], [0, sinb, cosb]])
 
         # Roll rotation matrix
-        Rc = np.array([[cosc, 0, sinc], [0, 1, 0], [-sinc, 0, cosc]])
+        Rc = np.array([[cosc, -sinc, 0], [sinc, cosc, 0], [0, 0, 1]])
 
         # The full rotation matrix
         R[i] = Ra @ Rb @ Rc
@@ -305,8 +302,8 @@ def residuals(
     for j in range(r.shape[0]):
         index, z, y_obs, x_obs = contours[j]
         p = (R[z] @ (X[index] - origin)) + origin + T[z]
-        r[j][0] = p[1] - y_obs  # (p . (0, 1, 0)) - y_obs
-        r[j][1] = p[2] - x_obs  # (p . (0, 0, 1)) - x_obs
+        r[j][0] = p[2] - y_obs  # (p . (0, 0, 1)) - y_obs
+        r[j][1] = p[0] - x_obs  # (p . (1, 0, 0)) - x_obs
 
     print(np.sqrt(np.mean(r**2)))
     return r.flatten()
@@ -324,7 +321,6 @@ def jacobian(
 
     # Construct the matrices for each image
     R = np.zeros((P.shape[0], 3, 3))
-    T = np.zeros((P.shape[0], 3))
     dR_da = np.zeros((P.shape[0], 3, 3))
     dR_db = np.zeros((P.shape[0], 3, 3))
     dR_dc = np.zeros((P.shape[0], 3, 3))
@@ -341,25 +337,25 @@ def jacobian(
         sinc = np.sin(roll)
 
         # Yaw rotation matrix
-        Ra = np.array([[1, 0, 0], [0, cosa, -sina], [0, sina, cosa]])
+        Ra = np.array([[cosa, 0, sina], [0, 1, 0], [-sina, 0, cosa]])
 
         # Pitch rotation matrix
-        Rb = np.array([[cosb, -sinb, 0], [sinb, cosb, 0], [0, 0, 1]])
+        Rb = np.array([[1, 0, 0], [0, cosb, -sinb], [0, sinb, cosb]])
 
         # Roll rotation matrix
-        Rc = np.array([[cosc, 0, sinc], [0, 1, 0], [-sinc, 0, cosc]])
+        Rc = np.array([[cosc, -sinc, 0], [sinc, cosc, 0], [0, 0, 1]])
 
         # The full rotation matrix
         R[i] = Ra @ Rb @ Rc
 
         # Derivative wrt yaw
-        dRa_da = np.array([[0, 0, 0], [0, -sina, -cosa], [0, cosa, -sina]])
+        dRa_da = np.array([[-sina, 0, cosa], [0, 0, 0], [-cosa, 0, -sina]])
 
         # Derivative wrt pitch
-        dRb_db = np.array([[-sinb, -cosb, 0], [cosb, -sinb, 0], [0, 0, 0]])
+        dRb_db = np.array([[0, 0, 0], [0, -sinb, -cosb], [0, cosb, -sinb]])
 
         # Derivative wrt roll
-        dRc_dc = np.array([[-sinc, 0, cosc], [0, 0, 0], [-cosc, 0, -sinc]])
+        dRc_dc = np.array([[-sinc, -cosc, 0], [cosc, -sinc, 0], [0, 0, 0]])
 
         # Derivatives of full rotation matrix wrt yaw, pitch and roll
         dR_da[i] = dRa_da @ Rb @ Rc
@@ -388,24 +384,24 @@ def jacobian(
         dp_dO2 = -R[z][:, 2] + np.array((0, 0, 1))  # -R[z] @ dO_dO2 + dO_dO2
 
         # Derivatives wrt image parameters
-        JP[j, 0, z, 0] = dp_da[1]  # dy_prd_da = dp_da . (0, 1, 0)
-        JP[j, 0, z, 1] = dp_db[1]  # dy_prd_db = dp_db . (0, 1, 0)
-        JP[j, 0, z, 2] = dp_dc[1]  # dy_prd_dc = dp_dc . (0, 1, 0)
-        JP[j, 0, z, 3] = 1  # dy_prd_dy = dp_dy . (0, 1, 0) = (0, 1, 0) . (0, 1, 0)
-        JP[j, 0, z, 4] = 0  # dy_prd_dx = dp_dx . (0, 1, 0) = (0, 0, 1) . (0, 1, 0)
-        JP[j, 1, z, 0] = dp_da[2]  # dx_prd_da = dp_da . (0, 0, 1)
-        JP[j, 1, z, 1] = dp_db[2]  # dx_prd_db = dp_db . (0, 0, 1)
-        JP[j, 1, z, 2] = dp_dc[2]  # dx_prd_dc = dp_dc . (0, 0, 1)
-        JP[j, 1, z, 3] = 0  # dx_prd_dy = dp_dy . (0, 0, 1) = (0, 1, 0) . (0, 0, 1)
-        JP[j, 1, z, 4] = 1  # dx_prd_dx = dp_dx . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
+        JP[j, 0, z, 0] = dp_da[2]  # dy_prd_da = dp_da . (0, 0, 1)
+        JP[j, 0, z, 1] = dp_db[2]  # dy_prd_db = dp_db . (0, 0, 1)
+        JP[j, 0, z, 2] = dp_dc[2]  # dy_prd_dc = dp_dc . (0, 0, 1)
+        JP[j, 0, z, 3] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
+        JP[j, 0, z, 4] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
+        JP[j, 1, z, 0] = dp_da[0]  # dx_prd_da = dp_da . (1, 0, 0)
+        JP[j, 1, z, 1] = dp_db[0]  # dx_prd_db = dp_db . (1, 0, 0)
+        JP[j, 1, z, 2] = dp_dc[0]  # dx_prd_dc = dp_dc . (1, 0, 0)
+        JP[j, 1, z, 3] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
+        JP[j, 1, z, 4] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
 
         # Derivatives wrt point parameters
-        JX[j, 0, index, 0] = dp_dX0[1]  # dy_prd_dX0 = dp_dX0 . (0, 1, 0)
-        JX[j, 0, index, 1] = dp_dX1[1]  # dy_prd_dX1 = dp_dX1 . (0, 1, 0)
-        JX[j, 0, index, 2] = dp_dX2[1]  # dy_prd_dX2 = dp_dX2 . (0, 1, 0)
-        JX[j, 1, index, 0] = dp_dX0[2]  # dx_prd_dX0 = dp_dX0 . (0, 0, 1)
-        JX[j, 1, index, 1] = dp_dX1[2]  # dx_prd_dX1 = dp_dX1 . (0, 0, 1)
-        JX[j, 1, index, 2] = dp_dX2[2]  # dx_prd_dX2 = dp_dX2 . (0, 0, 1)
+        JX[j, 0, index, 0] = dp_dX0[2]  # dy_prd_dX0 = dp_dX0 . (0, 0, 1)
+        JX[j, 0, index, 1] = dp_dX1[2]  # dy_prd_dX1 = dp_dX1 . (0, 0, 1)
+        JX[j, 0, index, 2] = dp_dX2[2]  # dy_prd_dX2 = dp_dX2 . (0, 0, 1)
+        JX[j, 1, index, 0] = dp_dX0[0]  # dx_prd_dX0 = dp_dX0 . (1, 0, 0)
+        JX[j, 1, index, 1] = dp_dX1[0]  # dx_prd_dX1 = dp_dX1 . (1, 0, 0)
+        JX[j, 1, index, 2] = dp_dX2[0]  # dx_prd_dX2 = dp_dX2 . (1, 0, 0)
 
     # Return the Jacobian
     JP = JP.reshape((contours.shape[0] * 2, P.size))
