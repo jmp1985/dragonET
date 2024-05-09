@@ -98,20 +98,6 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         dest="refine_roll",
         help="Refine roll (True/False)",
     )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=10,
-        dest="batch_size",
-        help="Set the batch size to determine initial model.",
-    )
-    parser.add_argument(
-        "--nbatch_cycles",
-        type=int,
-        default=2,
-        dest="nbatch_cycles",
-        help="Set the number of batch cycles to perform before global optimization",
-    )
 
     return parser
 
@@ -133,8 +119,6 @@ def refine_impl(args):
         args.points_out,
         args.refine_pitch,
         args.refine_roll,
-        args.batch_size,
-        args.nbatch_cycles,
     )
 
     # Write some timing stats
@@ -160,8 +144,13 @@ def unflatten_parameters(params, P_shape, X_shape):
     return P, X
 
 
-def make_bounds(P, X, reference_image=None, refine_pitch=False, refine_roll=False):
-    yaw = 30
+def make_bounds(
+    P, X, reference_image=None, refine_yaw=False, refine_pitch=False, refine_roll=False
+):
+    if refine_yaw:
+        yaw = 180
+    else:
+        yaw = 1e-7
 
     if refine_pitch:
         pitch = 90
@@ -335,59 +324,15 @@ def jacobian(
     # The full rotation matrix
     R = Ra @ Rb @ Rc
 
-    # Cos and sin of yaw, pitch and roll
-    cosa = np.cos(a)
-    sina = np.sin(a)
-    cosb = np.cos(b)
-    sinb = np.sin(b)
-    cosc = np.cos(c)
-    sinc = np.sin(c)
-
-    # Derivative wrt yaw
-    # [[-sina, 0,  cosa],
-    #  [    0, 0,     0],
-    #  [-cosa, 0, -sina]]
-    dRa_da = np.zeros((P.shape[0], 3, 3))
-    dRa_da[:, 0, 0] = -sina
-    dRa_da[:, 0, 2] = cosa
-    dRa_da[:, 2, 0] = -cosa
-    dRa_da[:, 2, 2] = -sina
-
-    # Derivative wrt pitch
-    # [[0,     0,     0],
-    #  [0, -sinb, -cosb],
-    #  [0,  cosb, -sinb]]
-    dRb_db = np.zeros((P.shape[0], 3, 3))
-    dRb_db[:, 1, 1] = -sinb
-    dRb_db[:, 1, 2] = -cosb
-    dRb_db[:, 2, 1] = cosb
-    dRb_db[:, 2, 2] = -sinb
-
-    # Derivative wrt roll
-    # [[-sinc, -cosc, 0],
-    #  [ cosc, -sinc, 0],
-    #  [    0,     0, 0]]
-    dRc_dc = np.zeros((P.shape[0], 3, 3))
-    dRc_dc[:, 0, 0] = -sinc
-    dRc_dc[:, 0, 1] = -cosc
-    dRc_dc[:, 1, 0] = cosc
-    dRc_dc[:, 1, 1] = -sinc
-
-    # Derivatives of full rotation matrix wrt yaw, pitch and roll
-    dR_da = dRa_da @ Rb @ Rc
-    dR_db = Ra @ dRb_db @ Rc
-    dR_dc = Ra @ Rb @ dRc_dc
+    fix_a = False
+    fix_b = False
+    fix_c = False
 
     # Get index, z, y and x from the contours
     index = contours["index"]  # Point index
     z = contours["z"]  # Image number
     y_obs = contours["y"]  # Observed y coordinate on image
     x_obs = contours["x"]  # Observed x coordinate on image
-
-    # Derivatives of p wrt to rotations
-    dp_da = np.einsum("...ij,...j", dR_da[z], X[index])
-    dp_db = np.einsum("...ij,...j", dR_db[z], X[index])
-    dp_dc = np.einsum("...ij,...j", dR_dc[z], X[index])
 
     # Derivatives of p wrt to point parameters
     dp_dX0 = R[z, :, 0]  # R[z] @ dp0_dX0 = R[z] @ (1, 0, 0)
@@ -398,17 +343,88 @@ def jacobian(
     JP = np.zeros((contours.shape[0], 2, P.shape[0], P.shape[1]))
     JX = np.zeros((contours.shape[0], 2, X.shape[0], X.shape[1]))
 
-    # Derivatives wrt image parameters
+    # The array of indices
     i = np.arange(z.size)
-    JP[i, 0, z, 0] = dp_da[i, 2]  # dy_prd_da = dp_da . (0, 0, 1)
-    JP[i, 0, z, 1] = dp_db[i, 2]  # dy_prd_db = dp_db . (0, 0, 1)
-    JP[i, 0, z, 2] = dp_dc[i, 2]  # dy_prd_dc = dp_dc . (0, 0, 1)
+
+    if not fix_a:
+        # Compute cos and sin of yaw
+        cosa = np.cos(a)
+        sina = np.sin(a)
+
+        # Derivative wrt yaw
+        # [[-sina, 0,  cosa],
+        #  [    0, 0,     0],
+        #  [-cosa, 0, -sina]]
+        dRa_da = np.zeros((P.shape[0], 3, 3))
+        dRa_da[:, 0, 0] = -sina
+        dRa_da[:, 0, 2] = cosa
+        dRa_da[:, 2, 0] = -cosa
+        dRa_da[:, 2, 2] = -sina
+
+        # Derivatives of full rotation matrix wrt yaw
+        dR_da = dRa_da @ Rb @ Rc
+
+        # Derivatives of p wrt to yaw
+        dp_da = np.einsum("...ij,...j", dR_da[z], X[index])
+
+        # Derivatives wrt yaw
+        JP[i, 0, z, 0] = dp_da[i, 2]  # dy_prd_da = dp_da . (0, 0, 1)
+        JP[i, 1, z, 0] = dp_da[i, 0]  # dx_prd_da = dp_da . (1, 0, 0)
+
+    if not fix_b:
+        # Cos and sin of pitch
+        cosb = np.cos(b)
+        sinb = np.sin(b)
+
+        # Derivative wrt pitch
+        # [[0,     0,     0],
+        #  [0, -sinb, -cosb],
+        #  [0,  cosb, -sinb]]
+        dRb_db = np.zeros((P.shape[0], 3, 3))
+        dRb_db[:, 1, 1] = -sinb
+        dRb_db[:, 1, 2] = -cosb
+        dRb_db[:, 2, 1] = cosb
+        dRb_db[:, 2, 2] = -sinb
+
+        # Derivatives of full rotation matrix wrt pitch
+        dR_db = Ra @ dRb_db @ Rc
+
+        # Derivatives of p wrt to pitch
+        dp_db = np.einsum("...ij,...j", dR_db[z], X[index])
+
+        # Derivatives wrt pitch
+        JP[i, 0, z, 1] = dp_db[i, 2]  # dy_prd_db = dp_db . (0, 0, 1)
+        JP[i, 1, z, 1] = dp_db[i, 0]  # dx_prd_db = dp_db . (1, 0, 0)
+
+    if not fix_c:
+        # Cos and sin of yaw, pitch and roll
+        cosc = np.cos(c)
+        sinc = np.sin(c)
+
+        # Derivative wrt roll
+        # [[-sinc, -cosc, 0],
+        #  [ cosc, -sinc, 0],
+        #  [    0,     0, 0]]
+        dRc_dc = np.zeros((P.shape[0], 3, 3))
+        dRc_dc[:, 0, 0] = -sinc
+        dRc_dc[:, 0, 1] = -cosc
+        dRc_dc[:, 1, 0] = cosc
+        dRc_dc[:, 1, 1] = -sinc
+
+        # Derivatives of full rotation matrix wrt yaw, pitch and roll
+        dR_dc = Ra @ Rb @ dRc_dc
+
+        # Derivatives of p wrt to rotations
+        dp_dc = np.einsum("...ij,...j", dR_dc[z], X[index])
+
+        # Derivatives wrt roll
+        JP[i, 0, z, 2] = dp_dc[i, 2]  # dy_prd_dc = dp_dc . (0, 0, 1)
+        JP[i, 1, z, 2] = dp_dc[i, 0]  # dx_prd_dc = dp_dc . (1, 0, 0)
+
+    # Derivatives wrt dy and dx
     JP[i, 0, z, 3] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
-    JP[i, 0, z, 4] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
-    JP[i, 1, z, 0] = dp_da[i, 0]  # dx_prd_da = dp_da . (1, 0, 0)
-    JP[i, 1, z, 1] = dp_db[i, 0]  # dx_prd_db = dp_db . (1, 0, 0)
-    JP[i, 1, z, 2] = dp_dc[i, 0]  # dx_prd_dc = dp_dc . (1, 0, 0)
     JP[i, 1, z, 3] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
+    JP[i, 0, z, 4] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
     JP[i, 1, z, 4] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
 
     # Derivatives wrt point parameters
@@ -432,6 +448,7 @@ def estimate(
     contours,
     image_size,
     reference_image=None,
+    refine_yaw=False,
     refine_pitch=False,
     refine_roll=False,
 ):
@@ -439,7 +456,9 @@ def estimate(
     params = flatten_parameters(P, X)
 
     # Make the parameter bounds
-    lower, upper = make_bounds(P, X, reference_image, refine_pitch, refine_roll)
+    lower, upper = make_bounds(
+        P, X, reference_image, refine_yaw, refine_pitch, refine_roll
+    )
 
     # Make the kwargs to pass to the residuals function
     kwargs = {
@@ -485,8 +504,6 @@ def _refine(
     points_out: str = None,
     refine_pitch: bool = False,
     refine_roll: bool = False,
-    batch_size: int = 10,
-    nbatch_cycles: int = 2,
 ):
     # Read the model
     model = read_model(model_in)
@@ -520,9 +537,7 @@ def _refine(
     num_points = len(set(contours["index"]))
     assert num_images == len(set(contours["z"]))
 
-    # If the coordinates are specified then use these directly in global
-    # refinement, otherwise do a batch refinement to get initial point
-    # parameters
+    # If the coordinates are specified then use these as a starting point
     if "coordinates" in points:
         X = np.array(points["coordinates"], dtype=float)
         assert X.shape[0] == num_points
@@ -530,33 +545,41 @@ def _refine(
         # Initialise the point parameters
         X = np.zeros((num_points, 3))
 
-        # Perform a number of initial batch cycles prior to global optimisation
-        for cycle in range(nbatch_cycles):
-            # Loop through all batches of images
-            for batch0 in np.arange(0, num_images, 1):  # batch_size // 2):
-                batch1 = batch0 + 2  # batch_size
-                select = (contours["z"] >= batch0) & (contours["z"] < batch1)
-                contours2 = contours[select]
-                contours2["z"] = contours2["z"] - contours2["z"].min()
-                P2 = P[batch0:batch1]
-                P2, X, rmsd = estimate(P2, X, contours2, image_size, reference_image=0)
-                P[batch0:batch1] = P2
-                print(batch0, rmsd)
+    # print("with yaw")
+    # P, X, rmsd = estimate(
+    #     P,
+    #     X,
+    #     contours,
+    #     image_size,
+    #     reference_image,
+    #     refine_yaw=False,
+    #     refine_pitch=False,
+    #     refine_roll=False,
+    # )
 
-    print("All")
+    print("with yaw")
     P, X, rmsd = estimate(
         P,
         X,
         contours,
         image_size,
         reference_image,
+        refine_yaw=True,
         refine_pitch=False,
+        refine_roll=False,
     )
 
     if refine_pitch:
         print("With pitch")
         P, X, rmsd = estimate(
-            P, X, contours, image_size, reference_image, refine_pitch=True
+            P,
+            X,
+            contours,
+            image_size,
+            reference_image,
+            refine_yaw=True,
+            refine_pitch=True,
+            refine_roll=False,
         )
 
     if refine_roll:
@@ -567,6 +590,7 @@ def _refine(
             contours,
             image_size,
             reference_image,
+            refine_yaw=True,
             refine_pitch=True,
             refine_roll=True,
         )
