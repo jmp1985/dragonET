@@ -12,7 +12,8 @@ RUN apt install -y \
   python3-pip \
   python-is-python3 \
   automake \
-  libtool
+  libtool \
+  fontconfig
 
 RUN pip install \
   numpy \
