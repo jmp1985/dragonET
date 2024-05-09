@@ -13,7 +13,9 @@ RUN apt install -y \
   python-is-python3 \
   automake \
   libtool \
-  fontconfig
+  fontconfig \
+  mesa-utils \
+  qt5-default
 
 RUN pip install \
   numpy \
