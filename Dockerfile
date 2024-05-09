@@ -17,7 +17,8 @@ RUN apt install -y \
   libtool \
   fontconfig \
   mesa-utils \
-  qt5-default
+  qt5-default \
+  libc6
 
 RUN pip install \
   numpy \
