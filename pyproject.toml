@@ -47,6 +47,7 @@ classifiers = [
 dependencies = [
   "matplotlib",
   "mrcfile",
+  "napari[all]",
   "numpy",
   "scipy",
   "pyyaml",
@@ -68,10 +69,6 @@ dynamic = [
 # Project additional optional dependencies
 #
 [project.optional-dependencies]
-
-all = [
-  "napari[all]",
-]
 
 test = [
   "pytest",
