@@ -13,6 +13,7 @@ import numpy as np
 import scipy.optimize
 import yaml
 from matplotlib import pylab
+from scipy.spatial.transform import Rotation
 
 __all__ = ["refine"]
 
@@ -257,11 +258,14 @@ def residuals(
     params,
     P_shape=None,
     X_shape=None,
-    I_shape=None,
+    image_size=None,
     contours=None,
 ):
     # Unflatten the parameters
     P, X = unflatten_parameters(params, P_shape, X_shape)
+
+    # The centre of the image
+    centre = np.array([image_size[1] / 2, 0, image_size[0] / 2])
 
     # The transformation
     a = P[:, 0]  # Yaw
@@ -270,35 +274,16 @@ def residuals(
     shifty = P[:, 3]  # Shift Y
     shiftx = P[:, 4]  # Shift X
 
-    # The centre of the image
-    centre = np.array([I_shape[1] / 2, 0, I_shape[0] / 2])
-
     # Create the translation vector for each image
     T = np.stack([shiftx, np.zeros(shiftx.size), shifty], axis=1)
 
-    # Construct the matrices
-    R = np.zeros((P.shape[0], 3, 3))
+    # Create the rotation matrix for each image
+    Ra = Rotation.from_rotvec(np.array((0, 1, 0))[None, :] * a[:, None]).as_matrix()
+    Rb = Rotation.from_rotvec(np.array((1, 0, 0))[None, :] * b[:, None]).as_matrix()
+    Rc = Rotation.from_rotvec(np.array((0, 0, 1))[None, :] * c[:, None]).as_matrix()
 
-    for i in range(P.shape[0]):
-        # Cos and sin of yaw, pitch and roll
-        cosa = np.cos(a[i])
-        sina = np.sin(a[i])
-        cosb = np.cos(b[i])
-        sinb = np.sin(b[i])
-        cosc = np.cos(c[i])
-        sinc = np.sin(c[i])
-
-        # Yaw rotation matrix
-        Ra = np.array([[cosa, 0, sina], [0, 1, 0], [-sina, 0, cosa]])
-
-        # Pitch rotation matrix
-        Rb = np.array([[1, 0, 0], [0, cosb, -sinb], [0, sinb, cosb]])
-
-        # Roll rotation matrix
-        Rc = np.array([[cosc, -sinc, 0], [sinc, cosc, 0], [0, 0, 1]])
-
-        # The full rotation matrix
-        R[i] = Ra @ Rb @ Rc
+    # The full rotation matrix
+    R = Ra @ Rb @ Rc
 
     # Compute the residuals
     r = np.zeros((contours.shape[0], 2))
@@ -316,54 +301,69 @@ def jacobian(
     params,
     P_shape=None,
     X_shape=None,
-    I_shape=None,
+    image_size=None,
     contours=None,
 ):
     # Unflatten the parameters
     P, X = unflatten_parameters(params, P_shape, X_shape)
 
-    # Construct the matrices for each image
-    R = np.zeros((P.shape[0], 3, 3))
-    dR_da = np.zeros((P.shape[0], 3, 3))
-    dR_db = np.zeros((P.shape[0], 3, 3))
-    dR_dc = np.zeros((P.shape[0], 3, 3))
-    for i in range(P.shape[0]):
-        # Get the parameters
-        yaw, pitch, roll, shifty, shiftx = P[i]
+    # The transformation
+    a = P[:, 0]  # Yaw
+    b = P[:, 1]  # Pitch
+    c = P[:, 2]  # Roll
+    shifty = P[:, 3]  # Shift Y
+    shiftx = P[:, 4]  # Shift X
 
-        # Cos and sin of yaw, pitch and roll
-        cosa = np.cos(yaw)
-        sina = np.sin(yaw)
-        cosb = np.cos(pitch)
-        sinb = np.sin(pitch)
-        cosc = np.cos(roll)
-        sinc = np.sin(roll)
+    # Create the rotation matrix for each image
+    Ra = Rotation.from_rotvec(np.array((0, 1, 0))[None, :] * a[:, None]).as_matrix()
+    Rb = Rotation.from_rotvec(np.array((1, 0, 0))[None, :] * b[:, None]).as_matrix()
+    Rc = Rotation.from_rotvec(np.array((0, 0, 1))[None, :] * c[:, None]).as_matrix()
 
-        # Yaw rotation matrix
-        Ra = np.array([[cosa, 0, sina], [0, 1, 0], [-sina, 0, cosa]])
+    # The full rotation matrix
+    R = Ra @ Rb @ Rc
 
-        # Pitch rotation matrix
-        Rb = np.array([[1, 0, 0], [0, cosb, -sinb], [0, sinb, cosb]])
+    # Cos and sin of yaw, pitch and roll
+    cosa = np.cos(a)
+    sina = np.sin(a)
+    cosb = np.cos(b)
+    sinb = np.sin(b)
+    cosc = np.cos(c)
+    sinc = np.sin(c)
 
-        # Roll rotation matrix
-        Rc = np.array([[cosc, -sinc, 0], [sinc, cosc, 0], [0, 0, 1]])
+    # Derivative wrt yaw
+    # [[-sina, 0,  cosa],
+    #  [    0, 0,     0],
+    #  [-cosa, 0, -sina]]
+    dRa_da = np.zeros((P.shape[0], 3, 3))
+    dRa_da[:, 0, 0] = -sina
+    dRa_da[:, 0, 2] = cosa
+    dRa_da[:, 2, 0] = -cosa
+    dRa_da[:, 2, 2] = -sina
 
-        # The full rotation matrix
-        R[i] = Ra @ Rb @ Rc
+    # Derivative wrt pitch
+    # [[0,     0,     0],
+    #  [0, -sinb, -cosb],
+    #  [0,  cosb, -sinb]]
+    dRb_db = np.zeros((P.shape[0], 3, 3))
+    dRb_db[:, 1, 1] = -sinb
+    dRb_db[:, 1, 2] = -cosb
+    dRb_db[:, 2, 1] = cosb
+    dRb_db[:, 2, 2] = -sinb
 
-        # Derivative wrt yaw
-        dRa_da = np.array([[-sina, 0, cosa], [0, 0, 0], [-cosa, 0, -sina]])
+    # Derivative wrt roll
+    # [[-sinc, -cosc, 0],
+    #  [ cosc, -sinc, 0],
+    #  [    0,     0, 0]]
+    dRc_dc = np.zeros((P.shape[0], 3, 3))
+    dRc_dc[:, 0, 0] = -sinc
+    dRc_dc[:, 0, 1] = -cosc
+    dRc_dc[:, 1, 0] = cosc
+    dRc_dc[:, 1, 1] = -sinc
 
-        # Derivative wrt pitch
-        dRb_db = np.array([[0, 0, 0], [0, -sinb, -cosb], [0, cosb, -sinb]])
-
-        # Derivative wrt roll
-        dRc_dc = np.array([[-sinc, -cosc, 0], [cosc, -sinc, 0], [0, 0, 0]])
-
-        # Derivatives of full rotation matrix wrt yaw, pitch and roll
-        dR_da[i] = dRa_da @ Rb @ Rc
-        dR_db[i] = Ra @ dRb_db @ Rc
-        dR_dc[i] = Ra @ Rb @ dRc_dc
+    # Derivatives of full rotation matrix wrt yaw, pitch and roll
+    dR_da = dRa_da @ Rb @ Rc
+    dR_db = Ra @ dRb_db @ Rc
+    dR_dc = Ra @ Rb @ dRc_dc
 
     # Compute the elements of the Jacobian
     JP = np.zeros((contours.shape[0], 2, P.shape[0], P.shape[1]))
@@ -432,7 +432,7 @@ def estimate(
     kwargs = {
         "P_shape": P.shape,
         "X_shape": X.shape,
-        "I_shape": image_size,
+        "image_size": image_size,
         "contours": contours,
     }
 
