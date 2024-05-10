@@ -713,9 +713,9 @@ def _refine(
         ax[0].hist(X[:, 0].flatten())
         ax[1].hist(X[:, 1].flatten())
         ax[2].hist(X[:, 2].flatten())
-        ax[0].set_xlabel("Z")
+        ax[0].set_xlabel("X")
         ax[1].set_xlabel("Y")
-        ax[2].set_xlabel("X")
+        ax[2].set_xlabel("Z")
         fig.suptitle("Distribution of points")
         fig.savefig(os.path.join(directory, "points_histogram.png"), dpi=600)
 
