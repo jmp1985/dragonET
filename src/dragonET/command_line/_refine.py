@@ -88,10 +88,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
     parser.add_argument(
         "--fix",
         type=str,
-        default=None,
+        default="c",
         dest="fix",
-        action="append",
-        choices=["a", "b", "c"],
+        choices=["abc", "bc", "c", "none"],
         help="Fix parameters in refinement",
     )
     parser.add_argument(
@@ -645,7 +644,7 @@ def _refine(
     points_in: str,
     points_out: str = None,
     plots_out: str = None,
-    fix: list = None,
+    fix: str = None,
 ):
     """
     Do the refinement
@@ -734,17 +733,12 @@ def _refine(
         )
 
     def get_cycles(fix):
-        # Check fix values are consistent
-        if fix:
-            fix = sorted(fix)
-            if "a" in fix:
-                if fix != ["a", "b", "c"]:
-                    print("- Warning: fixing 'a' implies fixing 'b' and 'c'")
-                    fix = ["a", "b", "c"]
-            elif "b" in fix:
-                if fix != ["b", "c"]:
-                    print("- Warning: fixing 'b' implies fixing 'c'")
-                    fix = ["b", "c"]
+        # Convert to None
+        if fix == "none":
+            fix = None
+
+        # Check input
+        assert fix in ["abc", "bc", "c", None]
 
         # Refine with just translation
         # Then refine with translation and yaw
