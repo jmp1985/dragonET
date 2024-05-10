@@ -133,22 +133,11 @@ def refine(args: List[str] = None):
     refine_impl(get_parser().parse_args(args=args))
 
 
-def flatten_parameters(P, X):
-    return np.concatenate([P.flatten(), X.flatten()])
-
-
-def unflatten_parameters(params, P_shape, X_shape):
-    P_size = np.prod(P_shape)
-    P = params[:P_size].reshape(P_shape)
-    X = params[P_size:].reshape(X_shape)
-    return P, X
-
-
 def make_bounds(
     P, X, reference_image=None, refine_yaw=False, refine_pitch=False, refine_roll=False
 ):
     if refine_yaw:
-        yaw = 1e-7
+        yaw = 30
     else:
         yaw = 1e-7
 
@@ -206,40 +195,68 @@ def make_bounds(
 
 
 class TargetBase:
-    def __init__(self, P, X, image_size, contours):
+    """
+    Base class for refinement target
+
+    """
+
+    cols: list = []
+
+    def __init__(
+        self, P: np.ndarray, X: np.ndarray, image_size: tuple, contours: np.ndarray
+    ):
+        """
+        Initialise the target
+
+        """
         self.P = P
         self.X = X
         self.image_size = image_size
         self.contours = contours
 
-    def compute_rotation_matrices(self, a, b, c):
-        # Create the rotation matrix for each image
-        Ra = Rotation.from_rotvec(np.array((0, 1, 0))[None, :] * a[:, None]).as_matrix()
-        Rb = Rotation.from_rotvec(np.array((1, 0, 0))[None, :] * b[:, None]).as_matrix()
-        Rc = Rotation.from_rotvec(np.array((0, 0, 1))[None, :] * c[:, None]).as_matrix()
+    def flatten_parameters(self, P: np.ndarray, X: np.ndarray) -> np.ndarray:
+        """
+        Flatten the parameters to refine
 
-        # Return the rotation matrices
-        return Ra, Rb, Rc
+        """
+        return np.concatenate([P[:, self.cols].flatten(), X.flatten()])
 
-    def predict(self, a, b, c, dy, dx, X, centre, index, z):
-        # Create the translation vector for each image
-        T = np.stack([dx, np.zeros(dx.size), dy], axis=1)
+    def unflatten_parameters(self, params: np.ndarray) -> tuple:
+        """
+        Unflatten the parameters to refine
 
-        # Create the rotation matrix for each image
-        Ra, Rb, Rc = self.compute_rotation_matrices(a, b, c)
+        """
 
-        # The full rotation matrix
-        R = Ra @ Rb @ Rc
+        # The number of image parameters to select
+        size = self.P.shape[0] * len(self.cols)
 
-        # Compute the predicted positions
-        p = np.einsum("...ij,...j", R[z], X[index]) + T[z] + centre
+        # Get the column parameters
+        P_cols, params = params[:size], params[size:]
+        P_cols = P_cols.reshape((-1, len(self.cols)))
 
-        # Return y_prd and x_prd
-        y_prd = p[:, 2]  # (p . (0, 0, 1))
-        x_prd = p[:, 0]  # (p . (1, 0, 0))
-        return y_prd, x_prd
+        # Get the point parameters
+        X = params.reshape(self.X.shape)
 
-    def _residuals(self, P, X, image_size, contours):
+        # Construct the image parameters
+        P = self.P.copy()
+        P[:, self.cols] = P_cols[:, :]
+
+        # Return the image and point parameters
+        return P, X
+
+    def residuals(self, params: np.ndarray) -> np.ndarray:
+        """
+        Compute the least squares residuals
+
+        """
+
+        # Unflatten the parameters
+        P, X = self.unflatten_parameters(params)
+
+        # Stored variables
+        image_size = self.image_size
+        contours = self.contours
+
         # The transformation
         a = P[:, 0]  # Yaw
         b = P[:, 1]  # Pitch
@@ -265,9 +282,72 @@ class TargetBase:
         r[:, 1] = x_prd - x_obs
 
         # Return the residuals
-        return r
+        print(np.sqrt(np.mean(r**2)))
+        return r.flatten()
 
-    def d_da(self, a, Rb, Rc, X, index, z):
+    @staticmethod
+    def predict(
+        a: np.array,
+        b: np.ndarray,
+        c: np.ndarray,
+        dy: np.ndarray,
+        dx: np.ndarray,
+        X: np.ndarray,
+        centre: np.ndarray,
+        index: np.ndarray,
+        z: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Predict the positions of the points on the images
+
+        """
+
+        # Create the translation vector for each image
+        T = np.stack([dx, np.zeros(dx.size), dy], axis=1)
+
+        # Create the rotation matrix for each image
+        Ra, Rb, Rc = TargetBase.compute_rotation_matrices(a, b, c)
+
+        # The full rotation matrix
+        R = Ra @ Rb @ Rc
+
+        # Compute the predicted positions
+        p = np.einsum("...ij,...j", R[z], X[index]) + T[z] + centre
+
+        # Return y_prd and x_prd
+        y_prd = p[:, 2]  # (p . (0, 0, 1))
+        x_prd = p[:, 0]  # (p . (1, 0, 0))
+        return y_prd, x_prd
+
+    @staticmethod
+    def compute_rotation_matrices(
+        a: np.ndarray, b: np.ndarray, c: np.ndarray
+    ) -> np.ndarray:
+        """
+        Compute the rotation matrices
+
+        """
+        # Create the rotation matrix for each image
+        Ra = Rotation.from_rotvec(np.array((0, 1, 0))[None, :] * a[:, None]).as_matrix()
+        Rb = Rotation.from_rotvec(np.array((1, 0, 0))[None, :] * b[:, None]).as_matrix()
+        Rc = Rotation.from_rotvec(np.array((0, 0, 1))[None, :] * c[:, None]).as_matrix()
+
+        # Return the rotation matrices
+        return Ra, Rb, Rc
+
+    @staticmethod
+    def d_da(
+        a: np.ndarray,
+        Rb: np.ndarray,
+        Rc: np.ndarray,
+        X: np.ndarray,
+        index: np.ndarray,
+        z: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Compute the derivatives wrt yaw
+
+        """
         # Compute cos and sin of yaw
         cosa = np.cos(a)
         sina = np.sin(a)
@@ -295,7 +375,19 @@ class TargetBase:
         # Return the derivatives
         return dy_prd_da, dx_prd_da
 
-    def d_db(self, Ra, b, Rc, X, index, z):
+    @staticmethod
+    def d_db(
+        Ra: np.ndarray,
+        b: np.ndarray,
+        Rc: np.ndarray,
+        X: np.ndarray,
+        index: np.ndarray,
+        z: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Compute the derivatives wrt pitch
+
+        """
         # Cos and sin of pitch
         cosb = np.cos(b)
         sinb = np.sin(b)
@@ -323,8 +415,20 @@ class TargetBase:
         # Return the derivatives
         return dy_prd_db, dx_prd_db
 
-    def d_dc(self, Ra, Rb, c, X, index, z):
-        # Cos and sin of yaw, pitch and roll
+    @staticmethod
+    def d_dc(
+        Ra: np.ndarray,
+        Rb: np.ndarray,
+        c: np.ndarray,
+        X: np.ndarray,
+        index: np.ndarray,
+        z: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Compute the derivatives wrt roll
+
+        """
+        # Cos and sin of roll
         cosc = np.cos(c)
         sinc = np.sin(c)
 
@@ -351,7 +455,12 @@ class TargetBase:
         # Return the derivatives
         return dy_prd_dc, dx_prd_dc
 
-    def d_dX(self, R, z):
+    @staticmethod
+    def d_dX(R: np.ndarray, z: np.ndarray) -> np.ndarray:
+        """
+        Compute the derivatives wrt X
+
+        """
         # Derivatives of p wrt to point parameters
         dp_dX0 = R[z, :, 0]  # R[z] @ dp0_dX0 = R[z] @ (1, 0, 0)
         dp_dX1 = R[z, :, 1]  # R[z] @ dp0_dX1 = R[z] @ (0, 1, 0)
@@ -374,27 +483,19 @@ class TargetBase:
 
 
 class TargetDyDx(TargetBase):
-    def flatten_parameters(self, P, X):
-        return np.concatenate([P[:, 3], P[:, 4], X.flatten()])
+    """
+    Target class for Dy and Dx refinement
 
-    def unflatten_parameters(self, params):
-        P = self.P.copy()
-        P[:, 3], params = params[: self.P.shape[0]], params[self.P.shape[0] :]
-        P[:, 4], params = params[: self.P.shape[0]], params[self.P.shape[0] :]
-        X = params.reshape(self.X.shape)
-        return P, X
+    """
 
-    def residuals(self, params):
-        # Unflatten the parameters
-        P, X = self.unflatten_parameters(params)
+    # Select the columns for refinement
+    cols = [3, 4]
 
-        # Compute the residuals
-        r = self._residuals(P, X, self.image_size, self.contours)
+    def jacobian(self, params: np.ndarray) -> np.ndarray:
+        """
+        Compute the jacobian
 
-        print(np.sqrt(np.mean(r**2)))
-        return r.flatten()
-
-    def jacobian(self, params):
+        """
         # Unflatten the parameters
         P, X = self.unflatten_parameters(params)
 
@@ -442,27 +543,157 @@ class TargetDyDx(TargetBase):
         return J
 
 
-class TargetABCDyDx(TargetBase):
-    def flatten_parameters(self, P, X):
-        return np.concatenate([P.flatten(), X.flatten()])
+class TargetADyDx(TargetBase):
+    """
+    Target class for A, Dy and Dx refinement
 
-    def unflatten_parameters(self, params):
-        P_size = np.prod(self.P.shape)
-        P = params[:P_size].reshape(self.P.shape)
-        X = params[P_size:].reshape(self.X.shape)
-        return P, X
+    """
 
-    def residuals(self, params):
+    # Select the columns for refinement
+    cols = [0, 3, 4]
+
+    def jacobian(self, params: np.ndarray) -> np.ndarray:
+        """
+        Compute the jacobian
+
+        """
         # Unflatten the parameters
         P, X = self.unflatten_parameters(params)
 
-        # Compute the residuals
-        r = self._residuals(P, X, self.image_size, self.contours)
+        # The transformation
+        a = P[:, 0]  # Yaw
+        b = P[:, 1]  # Pitch
+        c = P[:, 2]  # Roll
 
-        print(np.sqrt(np.mean(r**2)))
-        return r.flatten()
+        # Create the rotation matrix for each image
+        Ra, Rb, Rc = self.compute_rotation_matrices(a, b, c)
 
-    def jacobian(self, params):
+        # The full rotation matrix
+        R = Ra @ Rb @ Rc
+
+        # Get index, z, y and x from the contours
+        index = self.contours["index"]  # Point index
+        z = self.contours["z"]  # Image number
+
+        # Initialise the elements of the Jacobian
+        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
+        JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
+
+        # The array of indices
+        i = np.arange(z.size)
+
+        # Derivatives wrt yaw
+        d_da = self.d_da(a, Rb, Rc, X, index, z)
+        JP[i, 0, z, 0] = d_da[0]  # dy_prd_da
+        JP[i, 1, z, 0] = d_da[1]  # dx_prd_da
+
+        # Derivatives wrt dy and dx
+        JP[i, 0, z, 1] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
+        JP[i, 1, z, 1] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
+        JP[i, 0, z, 2] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
+        JP[i, 1, z, 2] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
+
+        # Derivatives wrt point parameters
+        d_dX = self.d_dX(R, z)
+        JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
+        JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
+        JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
+        JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
+        JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
+        JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
+
+        # Return the Jacobian
+        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
+        JX = JX.reshape((self.contours.shape[0] * 2, X.size))
+        J = np.concatenate([JP, JX], axis=1)
+        return J
+
+
+class TargetABDyDx(TargetBase):
+    """
+    Target class for A, B, Dy and Dx refinement
+
+    """
+
+    # Select the columns for refinement
+    cols = [0, 1, 3, 4]
+
+    def jacobian(self, params: np.ndarray) -> np.ndarray:
+        """
+        Compute the jacobian
+
+        """
+        # Unflatten the parameters
+        P, X = self.unflatten_parameters(params)
+
+        # The transformation
+        a = P[:, 0]  # Yaw
+        b = P[:, 1]  # Pitch
+        c = P[:, 2]  # Roll
+
+        # Create the rotation matrix for each image
+        Ra, Rb, Rc = self.compute_rotation_matrices(a, b, c)
+
+        # The full rotation matrix
+        R = Ra @ Rb @ Rc
+
+        # Get index, z, y and x from the contours
+        index = self.contours["index"]  # Point index
+        z = self.contours["z"]  # Image number
+
+        # Initialise the elements of the Jacobian
+        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
+        JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
+
+        # The array of indices
+        i = np.arange(z.size)
+
+        # Derivatives wrt yaw
+        d_da = self.d_da(a, Rb, Rc, X, index, z)
+        JP[i, 0, z, 0] = d_da[0]  # dy_prd_da
+        JP[i, 1, z, 0] = d_da[1]  # dx_prd_da
+
+        # Derivatives wrt pitch
+        d_db = self.d_db(Ra, b, Rc, X, index, z)
+        JP[i, 0, z, 1] = d_db[0]  # dy_prd_db
+        JP[i, 1, z, 1] = d_db[1]  # dx_prd_db
+
+        # Derivatives wrt dy and dx
+        JP[i, 0, z, 2] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
+        JP[i, 1, z, 2] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
+        JP[i, 0, z, 3] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
+        JP[i, 1, z, 3] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
+
+        # Derivatives wrt point parameters
+        d_dX = self.d_dX(R, z)
+        JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
+        JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
+        JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
+        JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
+        JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
+        JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
+
+        # Return the Jacobian
+        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
+        JX = JX.reshape((self.contours.shape[0] * 2, X.size))
+        J = np.concatenate([JP, JX], axis=1)
+        return J
+
+
+class TargetABCDyDx(TargetBase):
+    """
+    Target class for A, B, C, Dy and Dx refinement
+
+    """
+
+    # Select the columns for refinement
+    cols = [0, 1, 2, 3, 4]
+
+    def jacobian(self, params: np.ndarray) -> np.ndarray:
+        """
+        Compute the jacobian
+
+        """
         # Unflatten the parameters
         P, X = self.unflatten_parameters(params)
 
@@ -548,16 +779,22 @@ def estimate(
         "contours": contours,
     }
 
-    target = TargetABCDyDx(P, X, image_size, contours)
+    if not refine_yaw:
+        target = TargetDyDx(P, X, image_size, contours)
+    elif refine_yaw and not refine_pitch:
+        target = TargetADyDx(P, X, image_size, contours)
+    elif refine_pitch and not refine_roll:
+        target = TargetABDyDx(P, X, image_size, contours)
+    else:
+        target = TargetABCDyDx(P, X, image_size, contours)
 
     # Flatten the parameters
     params = target.flatten_parameters(P, X)
 
     # Do the optimisation
     result = scipy.optimize.least_squares(
-        target.residuals, params, jac=target.jacobian, bounds=(lower, upper)
-    )
-
+        target.residuals, params, jac=target.jacobian
+    )  # , bounds=(lower, upper))
     rmsd = np.sqrt(result.cost / len(contours))
 
     # Unflatten the parameters
@@ -630,17 +867,17 @@ def _refine(
         # Initialise the point parameters
         X = np.zeros((num_points, 3))
 
-    # print("with yaw")
-    # P, X, rmsd = estimate(
-    #     P,
-    #     X,
-    #     contours,
-    #     image_size,
-    #     reference_image,
-    #     refine_yaw=False,
-    #     refine_pitch=False,
-    #     refine_roll=False,
-    # )
+    print("with translation")
+    P, X, rmsd = estimate(
+        P,
+        X,
+        contours,
+        image_size,
+        reference_image,
+        refine_yaw=False,
+        refine_pitch=False,
+        refine_roll=False,
+    )
 
     print("with yaw")
     P, X, rmsd = estimate(
