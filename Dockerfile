@@ -1,5 +1,7 @@
 FROM nvidia/cuda:11.3.1-devel-ubuntu20.04
 
+ENV DEBIAN_FRONTEND noninteractive
+
 WORKDIR /app
 COPY . .
 
@@ -12,7 +14,11 @@ RUN apt install -y \
   python3-pip \
   python-is-python3 \
   automake \
-  libtool
+  libtool \
+  fontconfig \
+  mesa-utils \
+  qt5-default \
+  libc6
 
 RUN pip install \
   numpy \
@@ -31,4 +37,5 @@ WORKDIR /app
 RUN export CXX=$(which g++)
 RUN export CUDACXX=$(which nvcc)
 RUN git submodule update --init --recursive
+RUN pip install --upgrade pip
 RUN pip install .

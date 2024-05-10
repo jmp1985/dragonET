@@ -47,6 +47,8 @@ classifiers = [
 dependencies = [
   "matplotlib",
   "mrcfile",
+  "napari[all]",
+  "napari-mrcfile-reader",
   "numpy",
   "scipy",
   "pyyaml",
