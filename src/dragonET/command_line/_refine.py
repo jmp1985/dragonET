@@ -476,10 +476,9 @@ class TargetBase:
         dx_prd_dX2 = dp_dX2[:, 0]  # dx_prd_dX2 = dp_dX2 . (1, 0, 0)
 
         # Return the derivatives
-        return (dy_prd_dX0, dy_prd_dX1, dy_prd_dX2), (
-            dx_prd_dX0,
-            dx_prd_dX1,
-            dx_prd_dX2,
+        return (
+            (dy_prd_dX0, dy_prd_dX1, dy_prd_dX2),
+            (dx_prd_dX0, dx_prd_dX1, dx_prd_dX2),
         )
 
 
