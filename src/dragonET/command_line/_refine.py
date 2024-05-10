@@ -85,18 +85,13 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--refine_pitch",
-        type=bool,
-        default=False,
-        dest="refine_pitch",
-        help="Refine pitch (True/False)",
-    )
-    parser.add_argument(
-        "--refine_roll",
-        type=bool,
-        default=False,
-        dest="refine_roll",
-        help="Refine roll (True/False)",
+        "--fix",
+        type=str,
+        default=None,
+        dest="fix",
+        action="append",
+        choices=["a", "b", "c"],
+        help="Fix parameters in refinement",
     )
 
     return parser
@@ -117,8 +112,7 @@ def refine_impl(args):
         args.model_out,
         args.points_in,
         args.points_out,
-        args.refine_pitch,
-        args.refine_roll,
+        args.fix,
     )
 
     # Write some timing stats
@@ -282,8 +276,15 @@ class TargetBase:
         r[:, 1] = x_prd - x_obs
 
         # Return the residuals
-        print(np.sqrt(np.mean(r**2)))
+        # print(np.sqrt(np.mean(r**2)))
         return r.flatten()
+
+    def jacobian(self, params: np.ndarray) -> np.ndarray:
+        """
+        Compute the jacobian
+
+        """
+        raise NotImplementedError("Jacobian is not implemented for base class")
 
     @staticmethod
     def predict(
@@ -756,67 +757,62 @@ class TargetABCDyDx(TargetBase):
         return J
 
 
-def estimate(
-    P,
-    X,
-    contours,
-    image_size,
-    reference_image=None,
-    refine_yaw=False,
-    refine_pitch=False,
-    refine_roll=False,
+def make_target(
+    P: np.ndarray,
+    X: np.ndarray,
+    image_size: np.ndarray,
+    contours: np.ndarray,
+    fix: list = None,
 ):
-    # Make the parameter bounds
-    lower, upper = make_bounds(
-        P, X, reference_image, refine_yaw, refine_pitch, refine_roll
-    )
+    """
+    Make the refinement target
 
-    # Make the kwargs to pass to the residuals function
-    kwargs = {
-        "P_shape": P.shape,
-        "X_shape": X.shape,
-        "image_size": image_size,
-        "contours": contours,
-    }
+    """
+    if not fix or len(fix) == 0:
+        Target = TargetABCDyDx  # type: ignore
+    elif len(fix) == 1:
+        assert fix == ["c"]
+        Target = TargetABDyDx  # type: ignore
+    elif len(fix) == 2:
+        assert fix == ["b", "c"]
+        Target = TargetADyDx  # type: ignore
+    elif len(fix) == 3:
+        assert fix == ["a", "b", "c"]
+        Target = TargetDyDx  # type: ignore
+    return Target(P, X, image_size, contours)
 
-    if not refine_yaw:
-        target = TargetDyDx(P, X, image_size, contours)
-    elif refine_yaw and not refine_pitch:
-        target = TargetADyDx(P, X, image_size, contours)
-    elif refine_pitch and not refine_roll:
-        target = TargetABDyDx(P, X, image_size, contours)
-    else:
-        target = TargetABCDyDx(P, X, image_size, contours)
 
-    # Flatten the parameters
-    params = target.flatten_parameters(P, X)
+def refine_model(
+    P: np.ndarray,
+    X: np.ndarray,
+    image_size: np.ndarray,
+    contours: np.ndarray,
+    fix: list,
+) -> tuple:
+    """
+    Estimate the parameters using least squares
+
+    """
+    print("Refining model with %s fixed" % str(fix))
+
+    # Make the target
+    target = make_target(P, X, image_size, contours, fix)
 
     # Do the optimisation
     result = scipy.optimize.least_squares(
-        target.residuals, params, jac=target.jacobian
-    )  # , bounds=(lower, upper))
-    rmsd = np.sqrt(result.cost / len(contours))
+        target.residuals, target.flatten_parameters(P, X), jac=target.jacobian
+    )
 
     # Unflatten the parameters
     P, X = target.unflatten_parameters(result.x)
 
+    # Compute the RMSD
+    rmsd = np.sqrt(result.cost / len(contours))
+
+    print("RMSD: %f" % rmsd)
+
+    # Return the refined parameters and RMSD
     return P, X, rmsd
-
-
-def read_points(filename) -> dict:
-    return yaml.safe_load(open(filename, "r"))
-
-
-def read_model(filename) -> dict:
-    return yaml.safe_load(open(filename, "r"))
-
-
-def write_points(points, filename):
-    yaml.safe_dump(points, open(filename, "w"), default_flow_style=None)
-
-
-def write_model(model, filename):
-    yaml.safe_dump(model, open(filename, "w"), default_flow_style=None)
 
 
 def _refine(
@@ -824,20 +820,43 @@ def _refine(
     model_out: str,
     points_in: str,
     points_out: str = None,
-    refine_pitch: bool = False,
-    refine_roll: bool = False,
+    fix: list = None,
 ):
+    """
+    Do the refinement
+
+    """
+
+    def read_points(filename) -> dict:
+        print("Reading points from %s" % filename)
+        return yaml.safe_load(open(filename, "r"))
+
+    def read_model(filename) -> dict:
+        print("Reading model from %s" % filename)
+        return yaml.safe_load(open(filename, "r"))
+
+    def write_points(points, filename):
+        print("Writing points to %s" % filename)
+        yaml.safe_dump(points, open(filename, "w"), default_flow_style=None)
+
+    def write_model(model, filename):
+        print("Writing model to %s" % filename)
+        yaml.safe_dump(model, open(filename, "w"), default_flow_style=None)
+
+    def get_contours(points):
+        return np.array(
+            [tuple(x) for x in points["contours"]],
+            dtype=[("index", "int"), ("z", "int"), ("y", "float"), ("x", "float")],
+        )
+
     # Read the model
     model = read_model(model_in)
 
     # Read the points
     points = read_points(points_in)
 
-    # Read the contours
-    contours = np.array(
-        [tuple(x) for x in points["contours"]],
-        dtype=[("index", "int"), ("z", "int"), ("y", "float"), ("x", "float")],
-    )
+    # Get the contours
+    contours = get_contours(points)
 
     # Read the initial model and convert degrees to radians for use here
     P = np.array(model["transform"], dtype=float)
@@ -845,19 +864,16 @@ def _refine(
     P[:, 1] = np.radians(P[:, 1])
     P[:, 2] = np.radians(P[:, 2])
 
-    # Get the initial angles
-    angles = P[:, 2]  # Tilt angles are the roll angles
-
     # The image size
     image_size = model["image_size"]
-
-    # Set the reference image
-    reference_image = np.argmin(angles**2)
 
     # The number of images and points
     num_images = P.shape[0]
     num_points = len(set(contours["index"]))
     assert num_images == len(set(contours["z"]))
+    print("Num images: %d" % num_images)
+    print("Num contours: %d" % num_points)
+    print("Num observations: %d" % len(contours))
 
     # If the coordinates are specified then use these as a starting point
     if "coordinates" in points:
@@ -867,57 +883,31 @@ def _refine(
         # Initialise the point parameters
         X = np.zeros((num_points, 3))
 
-    print("with translation")
-    P, X, rmsd = estimate(
-        P,
-        X,
-        contours,
-        image_size,
-        reference_image,
-        refine_yaw=False,
-        refine_pitch=False,
-        refine_roll=False,
-    )
+    # Check fix values
+    if fix and "a" in fix:
+        if "b" not in fix or "c" not in fix:
+            print("- Warning: fixing 'a' implies fixing 'b' and 'c'")
+        fix = ["a", "b", "c"]
+    if fix and "b" in fix:
+        if "c" not in fix:
+            print("- Warning: fixing 'b' implies fixing 'c'")
+        fix = ["b", "c"]
 
-    print("with yaw")
-    P, X, rmsd = estimate(
-        P,
-        X,
-        contours,
-        image_size,
-        reference_image,
-        refine_yaw=True,
-        refine_pitch=False,
-        refine_roll=False,
-    )
+    # Refine with just translation
+    # Then refine with translation and yaw
+    # Then refine with translation, yaw and pitch
+    # Then refine with translation, yaw, pitch and roll
+    cycles = [["a", "b", "c"]]
+    if not fix or "a" not in fix:
+        cycles.append(["b", "c"])
+    if not fix or "b" not in fix:
+        cycles.append(["c"])
+    if not fix or "c" not in fix:
+        cycles.append([])
 
-    if refine_pitch:
-        print("With pitch")
-        P, X, rmsd = estimate(
-            P,
-            X,
-            contours,
-            image_size,
-            reference_image,
-            refine_yaw=True,
-            refine_pitch=True,
-            refine_roll=False,
-        )
-
-    if refine_roll:
-        print("With roll")
-        P, X, rmsd = estimate(
-            P,
-            X,
-            contours,
-            image_size,
-            reference_image,
-            refine_yaw=True,
-            refine_pitch=True,
-            refine_roll=True,
-        )
-
-    print(P[reference_image])
+    # Run through the cycles of refinement
+    for fixed in cycles:
+        P, X, rmsd = refine_model(P, X, image_size, contours, fix=fixed)
 
     # Plot the parameters
     pylab.plot(np.degrees(P[:, 0]), label="Yaw")
