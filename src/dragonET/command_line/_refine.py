@@ -140,17 +140,19 @@ def refine(args: List[str] = None):
     refine_impl(get_parser().parse_args(args=args))
 
 
-class TargetBase:
+class Target:
     """
     Base class for refinement target
 
     """
 
-    # The columns to refine
-    cols: list = []
-
     def __init__(
-        self, P: np.ndarray, X: np.ndarray, image_size: tuple, contours: np.ndarray
+        self,
+        P: np.ndarray,
+        X: np.ndarray,
+        image_size: tuple,
+        contours: np.ndarray,
+        cols: None,
     ):
         """
         Initialise the target
@@ -161,6 +163,12 @@ class TargetBase:
         self.X = X
         self.image_size = image_size
         self.contours = contours
+
+        # Set the columns
+        if cols is None:
+            self.cols = list(range(P.shape[1]))
+        else:
+            self.cols = cols
 
         # P lower bounds
         self.P_lower = [
@@ -257,6 +265,57 @@ class TargetBase:
         # print(np.sqrt(np.mean(r**2)))
         return r.flatten()
 
+    def jacobian(self, params: np.ndarray) -> np.ndarray:
+        """
+        Compute the jacobian
+
+        """
+        # Unflatten the parameters
+        P, X = self.unflatten_parameters(params)
+
+        # The transformation
+        a = P[:, 0]  # Yaw
+        b = P[:, 1]  # Pitch
+        c = P[:, 2]  # Roll
+
+        # Create the rotation matrix for each image
+        Ra, Rb, Rc = self.compute_rotation_matrices(a, b, c)
+
+        # The full rotation matrix
+        R = Ra @ Rb @ Rc
+
+        # Get index, z, y and x from the contours
+        index = self.contours["index"]  # Point index
+        z = self.contours["z"]  # Image number
+
+        # Initialise the elements of the Jacobian
+        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
+        JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
+
+        # The array of indices
+        i = np.arange(z.size)
+
+        # Derivatives wrt image parameters
+        for j, col in enumerate(self.cols):
+            d_dP = self.d_dP(col, a, b, c, Ra, Rb, Rc, X[index], z)
+            JP[i, 0, z, j] = d_dP[0]  # dy_prd_dcol
+            JP[i, 1, z, j] = d_dP[1]  # dx_prd_dcol
+
+        # Derivatives wrt point parameters
+        d_dX = self.d_dX(R, z)
+        JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
+        JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
+        JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
+        JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
+        JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
+        JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
+
+        # Return the Jacobian
+        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
+        JX = JX.reshape((self.contours.shape[0] * 2, X.size))
+        J = np.concatenate([JP, JX], axis=1)
+        return J
+
     def bounds(self) -> tuple:
         """
         Define the bounds
@@ -303,7 +362,7 @@ class TargetBase:
         T = np.stack([dx, np.zeros(dx.size), dy], axis=1)
 
         # Create the rotation matrix for each image
-        Ra, Rb, Rc = TargetBase.compute_rotation_matrices(a, b, c)
+        Ra, Rb, Rc = Target.compute_rotation_matrices(a, b, c)
 
         # The full rotation matrix
         R = Ra @ Rb @ Rc
@@ -484,11 +543,11 @@ class TargetBase:
 
         """
         return [
-            lambda: TargetBase.d_da(a, Rb, Rc, X, z),
-            lambda: TargetBase.d_db(Ra, b, Rc, X, z),
-            lambda: TargetBase.d_dc(Ra, Rb, c, X, z),
-            lambda: TargetBase.d_dy(),
-            lambda: TargetBase.d_dx(),
+            lambda: Target.d_da(a, Rb, Rc, X, z),
+            lambda: Target.d_db(Ra, b, Rc, X, z),
+            lambda: Target.d_dc(Ra, Rb, c, X, z),
+            lambda: Target.d_dy(),
+            lambda: Target.d_dx(),
         ][col]()
 
     @staticmethod
@@ -516,97 +575,6 @@ class TargetBase:
             (dx_prd_dX0, dx_prd_dX1, dx_prd_dX2),
         )
 
-    def jacobian(self, params: np.ndarray) -> np.ndarray:
-        """
-        Compute the jacobian
-
-        """
-        # Unflatten the parameters
-        P, X = self.unflatten_parameters(params)
-
-        # The transformation
-        a = P[:, 0]  # Yaw
-        b = P[:, 1]  # Pitch
-        c = P[:, 2]  # Roll
-
-        # Create the rotation matrix for each image
-        Ra, Rb, Rc = self.compute_rotation_matrices(a, b, c)
-
-        # The full rotation matrix
-        R = Ra @ Rb @ Rc
-
-        # Get index, z, y and x from the contours
-        index = self.contours["index"]  # Point index
-        z = self.contours["z"]  # Image number
-
-        # Initialise the elements of the Jacobian
-        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
-        JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
-
-        # The array of indices
-        i = np.arange(z.size)
-
-        # Derivatives wrt image parameters
-        for j, col in enumerate(self.cols):
-            dprd_dcol = self.d_dP(col, a, b, c, Ra, Rb, Rc, X[index], z)
-            JP[i, 0, z, j] = dprd_dcol[0]  # dy_prd_dcol
-            JP[i, 1, z, j] = dprd_dcol[1]  # dx_prd_dcol
-
-        # Derivatives wrt point parameters
-        d_dX = self.d_dX(R, z)
-        JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
-        JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
-        JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
-        JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
-        JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
-        JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
-
-        # Return the Jacobian
-        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
-        JX = JX.reshape((self.contours.shape[0] * 2, X.size))
-        J = np.concatenate([JP, JX], axis=1)
-        return J
-
-
-class TargetDyDx(TargetBase):
-    """
-    Target class for Dy and Dx refinement
-
-    """
-
-    # Select the columns for refinement
-    cols = [3, 4]
-
-
-class TargetADyDx(TargetBase):
-    """
-    Target class for A, Dy and Dx refinement
-
-    """
-
-    # Select the columns for refinement
-    cols = [0, 3, 4]
-
-
-class TargetABDyDx(TargetBase):
-    """
-    Target class for A, B, Dy and Dx refinement
-
-    """
-
-    # Select the columns for refinement
-    cols = [0, 1, 3, 4]
-
-
-class TargetABCDyDx(TargetBase):
-    """
-    Target class for A, B, C, Dy and Dx refinement
-
-    """
-
-    # Select the columns for refinement
-    cols = [0, 1, 2, 3, 4]
-
 
 def make_target(
     P: np.ndarray,
@@ -619,18 +587,20 @@ def make_target(
     Make the refinement target
 
     """
-    if not fix or len(fix) == 0:
-        Target = TargetABCDyDx  # type: ignore
-    elif len(fix) == 1:
-        assert fix == ["c"]
-        Target = TargetABDyDx  # type: ignore
-    elif len(fix) == 2:
-        assert fix == ["b", "c"]
-        Target = TargetADyDx  # type: ignore
-    elif len(fix) == 3:
-        assert fix == ["a", "b", "c"]
-        Target = TargetDyDx  # type: ignore
-    return Target(P, X, image_size, contours)
+
+    # Map the strings to indices
+    column_index = {"a": 0, "b": 1, "c": 2, "y": 3, "x": 4}
+
+    # Create the column array
+    cols = np.arange(P.shape[1])
+
+    # If we are fixing some items remove them
+    if fix:
+        for item in fix:
+            cols = cols[np.where(cols != column_index[item])[0]]
+
+    # Return the target
+    return Target(P, X, image_size, contours, cols)
 
 
 def refine_model(
