@@ -127,74 +127,38 @@ def refine(args: List[str] = None):
     refine_impl(get_parser().parse_args(args=args))
 
 
-def make_bounds(
-    P, X, reference_image=None, refine_yaw=False, refine_pitch=False, refine_roll=False
-):
-    if refine_yaw:
-        yaw = 30
-    else:
-        yaw = 1e-7
-
-    if refine_pitch:
-        pitch = 90
-    else:
-        pitch = 1e-7
-
-    if refine_roll:
-        roll = 0.5
-    else:
-        roll = 1e-7
-
-    # P lower bounds
-    P_lower = np.zeros_like(P)
-    P_lower[:, 0] = P[:, 0] - np.radians(yaw)  # Yaw
-    P_lower[:, 1] = P[:, 1] - np.radians(pitch)  # Pitch
-    P_lower[:, 2] = P[:, 2] - np.radians(roll)  # Roll
-    P_lower[:, 3] = -4096  # Y
-    P_lower[:, 4] = -4096  # X
-
-    # P upper bounds
-    P_upper = np.zeros_like(P)
-    P_upper[:, 0] = P[:, 0] + np.radians(yaw)  # Yaw
-    P_upper[:, 1] = P[:, 1] + np.radians(pitch)  # Pitch
-    P_upper[:, 2] = P[:, 2] + np.radians(roll)  # Roll
-    P_upper[:, 3] = 4096  # Y
-    P_upper[:, 4] = 4096  # X
-
-    # Set the reference image parameters
-    if reference_image:
-        P_lower[reference_image, 1] = P[reference_image, 1] - 1e-7
-        P_lower[reference_image, 2] = P[reference_image, 2] - 1e-7
-        # P_lower[reference_image, 3] = P[reference_image, 3] - 1e-7
-        # P_lower[reference_image, 4] = P[reference_image, 4] - 1e-7
-        P_upper[reference_image, 1] = P[reference_image, 1] + 1e-7
-        P_upper[reference_image, 2] = P[reference_image, 2] + 1e-7
-        # P_upper[reference_image, 3] = P[reference_image, 3] + 1e-7
-        # P_upper[reference_image, 4] = P[reference_image, 4] + 1e-7
-
-    # X lower bounds
-    X_lower = np.zeros_like(X)
-    X_lower[:, :] = -4096
-
-    # X upper bounds
-    X_upper = np.zeros_like(X)
-    X_upper[:, :] = 4096
-
-    # Lower and upper bounds
-    lower = np.concatenate([P_lower.flatten(), X_lower.flatten()])
-    upper = np.concatenate([P_upper.flatten(), X_upper.flatten()])
-
-    # Return bounds
-    return lower, upper
-
-
 class TargetBase:
     """
     Base class for refinement target
 
     """
 
+    # The columns to refine
     cols: list = []
+
+    # P lower bounds
+    P_lower = [
+        -np.radians(180),
+        -np.radians(90),
+        -np.radians(90),
+        -np.inf,
+        -np.inf,
+    ]
+
+    # P upper bounds
+    P_upper = [
+        np.radians(180),
+        np.radians(90),
+        np.radians(90),
+        np.inf,
+        np.inf,
+    ]
+
+    # X upper bounds
+    X_lower = -np.inf
+
+    # X lower bounds
+    X_upper = np.inf
 
     def __init__(
         self, P: np.ndarray, X: np.ndarray, image_size: tuple, contours: np.ndarray
@@ -285,6 +249,31 @@ class TargetBase:
 
         """
         raise NotImplementedError("Jacobian is not implemented for base class")
+
+    def bounds(self) -> tuple:
+        """
+        Define the bounds
+
+        """
+
+        # P bounds
+        P_lower = np.repeat(
+            [np.array(self.P_lower)[self.cols]], self.P.shape[0], axis=0
+        )
+        P_upper = np.repeat(
+            [np.array(self.P_upper)[self.cols]], self.P.shape[0], axis=0
+        )
+
+        # X lower and upper bounds
+        X_lower = np.full(self.X.shape, self.X_lower)
+        X_upper = np.full(self.X.shape, self.X_upper)
+
+        # Lower and upper bounds
+        lower = np.concatenate([P_lower.flatten(), X_lower.flatten()])
+        upper = np.concatenate([P_upper.flatten(), X_upper.flatten()])
+
+        # Return bounds
+        return lower, upper
 
     @staticmethod
     def predict(
@@ -800,7 +789,10 @@ def refine_model(
 
     # Do the optimisation
     result = scipy.optimize.least_squares(
-        target.residuals, target.flatten_parameters(P, X), jac=target.jacobian
+        target.residuals,
+        target.flatten_parameters(P, X),
+        jac=target.jacobian,
+        bounds=target.bounds(),
     )
 
     # Unflatten the parameters
