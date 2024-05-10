@@ -345,7 +345,6 @@ class TargetBase:
         Rb: np.ndarray,
         Rc: np.ndarray,
         X: np.ndarray,
-        index: np.ndarray,
         z: np.ndarray,
     ) -> np.ndarray:
         """
@@ -370,7 +369,7 @@ class TargetBase:
         dR_da = dRa_da @ Rb @ Rc
 
         # Derivatives of p wrt to yaw
-        dp_da = np.einsum("...ij,...j", dR_da[z], X[index])
+        dp_da = np.einsum("...ij,...j", dR_da[z], X)
 
         # Derivatives wrt yaw
         dy_prd_da = dp_da[:, 2]  # dy_prd_da = dp_da . (0, 0, 1)
@@ -385,7 +384,6 @@ class TargetBase:
         b: np.ndarray,
         Rc: np.ndarray,
         X: np.ndarray,
-        index: np.ndarray,
         z: np.ndarray,
     ) -> np.ndarray:
         """
@@ -410,7 +408,7 @@ class TargetBase:
         dR_db = Ra @ dRb_db @ Rc
 
         # Derivatives of p wrt to pitch
-        dp_db = np.einsum("...ij,...j", dR_db[z], X[index])
+        dp_db = np.einsum("...ij,...j", dR_db[z], X)
 
         # Derivatives wrt pitch
         dy_prd_db = dp_db[:, 2]  # dy_prd_db = dp_db . (0, 0, 1)
@@ -425,7 +423,6 @@ class TargetBase:
         Rb: np.ndarray,
         c: np.ndarray,
         X: np.ndarray,
-        index: np.ndarray,
         z: np.ndarray,
     ) -> np.ndarray:
         """
@@ -450,7 +447,7 @@ class TargetBase:
         dR_dc = Ra @ Rb @ dRc_dc
 
         # Derivatives of p wrt to rotations
-        dp_dc = np.einsum("...ij,...j", dR_dc[z], X[index])
+        dp_dc = np.einsum("...ij,...j", dR_dc[z], X)
 
         # Derivatives wrt roll
         dy_prd_dc = dp_dc[:, 2]  # dy_prd_dc = dp_dc . (0, 0, 1)
@@ -587,7 +584,7 @@ class TargetADyDx(TargetBase):
         i = np.arange(z.size)
 
         # Derivatives wrt yaw
-        d_da = self.d_da(a, Rb, Rc, X, index, z)
+        d_da = self.d_da(a, Rb, Rc, X[index], z)
         JP[i, 0, z, 0] = d_da[0]  # dy_prd_da
         JP[i, 1, z, 0] = d_da[1]  # dx_prd_da
 
@@ -653,12 +650,12 @@ class TargetABDyDx(TargetBase):
         i = np.arange(z.size)
 
         # Derivatives wrt yaw
-        d_da = self.d_da(a, Rb, Rc, X, index, z)
+        d_da = self.d_da(a, Rb, Rc, X[index], z)
         JP[i, 0, z, 0] = d_da[0]  # dy_prd_da
         JP[i, 1, z, 0] = d_da[1]  # dx_prd_da
 
         # Derivatives wrt pitch
-        d_db = self.d_db(Ra, b, Rc, X, index, z)
+        d_db = self.d_db(Ra, b, Rc, X[index], z)
         JP[i, 0, z, 1] = d_db[0]  # dy_prd_db
         JP[i, 1, z, 1] = d_db[1]  # dx_prd_db
 
@@ -724,17 +721,17 @@ class TargetABCDyDx(TargetBase):
         i = np.arange(z.size)
 
         # Derivatives wrt yaw
-        d_da = self.d_da(a, Rb, Rc, X, index, z)
+        d_da = self.d_da(a, Rb, Rc, X[index], z)
         JP[i, 0, z, 0] = d_da[0]  # dy_prd_da
         JP[i, 1, z, 0] = d_da[1]  # dx_prd_da
 
         # Derivatives wrt pitch
-        d_db = self.d_db(Ra, b, Rc, X, index, z)
+        d_db = self.d_db(Ra, b, Rc, X[index], z)
         JP[i, 0, z, 1] = d_db[0]  # dy_prd_db
         JP[i, 1, z, 1] = d_db[1]  # dx_prd_db
 
         # Derivatives wrt roll
-        d_dc = self.d_dc(Ra, Rb, c, X, index, z)
+        d_dc = self.d_dc(Ra, Rb, c, X[index], z)
         JP[i, 0, z, 2] = d_dc[0]  # dy_prd_dc
         JP[i, 1, z, 2] = d_dc[1]  # dx_prd_dc
 
