@@ -257,13 +257,6 @@ class TargetBase:
         # print(np.sqrt(np.mean(r**2)))
         return r.flatten()
 
-    def jacobian(self, params: np.ndarray) -> np.ndarray:
-        """
-        Compute the jacobian
-
-        """
-        raise NotImplementedError("Jacobian is not implemented for base class")
-
     def bounds(self) -> tuple:
         """
         Define the bounds
@@ -300,7 +293,7 @@ class TargetBase:
         centre: np.ndarray,
         index: np.ndarray,
         z: np.ndarray,
-    ) -> np.ndarray:
+    ) -> tuple:
         """
         Predict the positions of the points on the images
 
@@ -324,9 +317,7 @@ class TargetBase:
         return y_prd, x_prd
 
     @staticmethod
-    def compute_rotation_matrices(
-        a: np.ndarray, b: np.ndarray, c: np.ndarray
-    ) -> np.ndarray:
+    def compute_rotation_matrices(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> tuple:
         """
         Compute the rotation matrices
 
@@ -346,7 +337,7 @@ class TargetBase:
         Rc: np.ndarray,
         X: np.ndarray,
         z: np.ndarray,
-    ) -> np.ndarray:
+    ) -> tuple:
         """
         Compute the derivatives wrt yaw
 
@@ -385,7 +376,7 @@ class TargetBase:
         Rc: np.ndarray,
         X: np.ndarray,
         z: np.ndarray,
-    ) -> np.ndarray:
+    ) -> tuple:
         """
         Compute the derivatives wrt pitch
 
@@ -424,7 +415,7 @@ class TargetBase:
         c: np.ndarray,
         X: np.ndarray,
         z: np.ndarray,
-    ) -> np.ndarray:
+    ) -> tuple:
         """
         Compute the derivatives wrt roll
 
@@ -457,6 +448,50 @@ class TargetBase:
         return dy_prd_dc, dx_prd_dc
 
     @staticmethod
+    def d_dy() -> tuple:
+        """
+        Compute the derivatives wrt y shift
+
+        """
+        # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
+        # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
+        return 1, 0
+
+    @staticmethod
+    def d_dx() -> tuple:
+        """
+        Compute the derivatives wrt x shift
+
+        """
+        # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
+        # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
+        return 0, 1
+
+    @staticmethod
+    def d_dP(
+        col: int,
+        a: np.ndarray,
+        b: np.ndarray,
+        c: np.ndarray,
+        Ra: np.ndarray,
+        Rb: np.ndarray,
+        Rc: np.ndarray,
+        X: np.ndarray,
+        z: np.ndarray,
+    ) -> tuple:
+        """
+        Compute derivatices wrt image parameters
+
+        """
+        return [
+            lambda: TargetBase.d_da(a, Rb, Rc, X, z),
+            lambda: TargetBase.d_db(Ra, b, Rc, X, z),
+            lambda: TargetBase.d_dc(Ra, Rb, c, X, z),
+            lambda: TargetBase.d_dy(),
+            lambda: TargetBase.d_dx(),
+        ][col]()
+
+    @staticmethod
     def d_dX(R: np.ndarray, z: np.ndarray) -> np.ndarray:
         """
         Compute the derivatives wrt X
@@ -481,16 +516,6 @@ class TargetBase:
             (dx_prd_dX0, dx_prd_dX1, dx_prd_dX2),
         )
 
-
-class TargetDyDx(TargetBase):
-    """
-    Target class for Dy and Dx refinement
-
-    """
-
-    # Select the columns for refinement
-    cols = [3, 4]
-
     def jacobian(self, params: np.ndarray) -> np.ndarray:
         """
         Compute the jacobian
@@ -515,17 +540,17 @@ class TargetDyDx(TargetBase):
         z = self.contours["z"]  # Image number
 
         # Initialise the elements of the Jacobian
-        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], 2))
+        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
         JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
 
         # The array of indices
         i = np.arange(z.size)
 
-        # Derivatives wrt dy and dx
-        JP[i, 0, z, 0] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
-        JP[i, 1, z, 0] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
-        JP[i, 0, z, 1] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
-        JP[i, 1, z, 1] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
+        # Derivatives wrt image parameters
+        for j, col in enumerate(self.cols):
+            dprd_dcol = self.d_dP(col, a, b, c, Ra, Rb, Rc, X[index], z)
+            JP[i, 0, z, j] = dprd_dcol[0]  # dy_prd_dcol
+            JP[i, 1, z, j] = dprd_dcol[1]  # dx_prd_dcol
 
         # Derivatives wrt point parameters
         d_dX = self.d_dX(R, z)
@@ -537,10 +562,20 @@ class TargetDyDx(TargetBase):
         JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
 
         # Return the Jacobian
-        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * 2))
+        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
         JX = JX.reshape((self.contours.shape[0] * 2, X.size))
         J = np.concatenate([JP, JX], axis=1)
         return J
+
+
+class TargetDyDx(TargetBase):
+    """
+    Target class for Dy and Dx refinement
+
+    """
+
+    # Select the columns for refinement
+    cols = [3, 4]
 
 
 class TargetADyDx(TargetBase):
@@ -552,62 +587,6 @@ class TargetADyDx(TargetBase):
     # Select the columns for refinement
     cols = [0, 3, 4]
 
-    def jacobian(self, params: np.ndarray) -> np.ndarray:
-        """
-        Compute the jacobian
-
-        """
-        # Unflatten the parameters
-        P, X = self.unflatten_parameters(params)
-
-        # The transformation
-        a = P[:, 0]  # Yaw
-        b = P[:, 1]  # Pitch
-        c = P[:, 2]  # Roll
-
-        # Create the rotation matrix for each image
-        Ra, Rb, Rc = self.compute_rotation_matrices(a, b, c)
-
-        # The full rotation matrix
-        R = Ra @ Rb @ Rc
-
-        # Get index, z, y and x from the contours
-        index = self.contours["index"]  # Point index
-        z = self.contours["z"]  # Image number
-
-        # Initialise the elements of the Jacobian
-        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
-        JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
-
-        # The array of indices
-        i = np.arange(z.size)
-
-        # Derivatives wrt yaw
-        d_da = self.d_da(a, Rb, Rc, X[index], z)
-        JP[i, 0, z, 0] = d_da[0]  # dy_prd_da
-        JP[i, 1, z, 0] = d_da[1]  # dx_prd_da
-
-        # Derivatives wrt dy and dx
-        JP[i, 0, z, 1] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
-        JP[i, 1, z, 1] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
-        JP[i, 0, z, 2] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
-        JP[i, 1, z, 2] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
-
-        # Derivatives wrt point parameters
-        d_dX = self.d_dX(R, z)
-        JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
-        JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
-        JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
-        JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
-        JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
-        JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
-
-        # Return the Jacobian
-        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
-        JX = JX.reshape((self.contours.shape[0] * 2, X.size))
-        J = np.concatenate([JP, JX], axis=1)
-        return J
-
 
 class TargetABDyDx(TargetBase):
     """
@@ -618,67 +597,6 @@ class TargetABDyDx(TargetBase):
     # Select the columns for refinement
     cols = [0, 1, 3, 4]
 
-    def jacobian(self, params: np.ndarray) -> np.ndarray:
-        """
-        Compute the jacobian
-
-        """
-        # Unflatten the parameters
-        P, X = self.unflatten_parameters(params)
-
-        # The transformation
-        a = P[:, 0]  # Yaw
-        b = P[:, 1]  # Pitch
-        c = P[:, 2]  # Roll
-
-        # Create the rotation matrix for each image
-        Ra, Rb, Rc = self.compute_rotation_matrices(a, b, c)
-
-        # The full rotation matrix
-        R = Ra @ Rb @ Rc
-
-        # Get index, z, y and x from the contours
-        index = self.contours["index"]  # Point index
-        z = self.contours["z"]  # Image number
-
-        # Initialise the elements of the Jacobian
-        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
-        JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
-
-        # The array of indices
-        i = np.arange(z.size)
-
-        # Derivatives wrt yaw
-        d_da = self.d_da(a, Rb, Rc, X[index], z)
-        JP[i, 0, z, 0] = d_da[0]  # dy_prd_da
-        JP[i, 1, z, 0] = d_da[1]  # dx_prd_da
-
-        # Derivatives wrt pitch
-        d_db = self.d_db(Ra, b, Rc, X[index], z)
-        JP[i, 0, z, 1] = d_db[0]  # dy_prd_db
-        JP[i, 1, z, 1] = d_db[1]  # dx_prd_db
-
-        # Derivatives wrt dy and dx
-        JP[i, 0, z, 2] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
-        JP[i, 1, z, 2] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
-        JP[i, 0, z, 3] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
-        JP[i, 1, z, 3] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
-
-        # Derivatives wrt point parameters
-        d_dX = self.d_dX(R, z)
-        JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
-        JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
-        JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
-        JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
-        JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
-        JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
-
-        # Return the Jacobian
-        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
-        JX = JX.reshape((self.contours.shape[0] * 2, X.size))
-        J = np.concatenate([JP, JX], axis=1)
-        return J
-
 
 class TargetABCDyDx(TargetBase):
     """
@@ -688,72 +606,6 @@ class TargetABCDyDx(TargetBase):
 
     # Select the columns for refinement
     cols = [0, 1, 2, 3, 4]
-
-    def jacobian(self, params: np.ndarray) -> np.ndarray:
-        """
-        Compute the jacobian
-
-        """
-        # Unflatten the parameters
-        P, X = self.unflatten_parameters(params)
-
-        # The transformation
-        a = P[:, 0]  # Yaw
-        b = P[:, 1]  # Pitch
-        c = P[:, 2]  # Roll
-
-        # Create the rotation matrix for each image
-        Ra, Rb, Rc = self.compute_rotation_matrices(a, b, c)
-
-        # The full rotation matrix
-        R = Ra @ Rb @ Rc
-
-        # Get index, z, y and x from the contours
-        index = self.contours["index"]  # Point index
-        z = self.contours["z"]  # Image number
-
-        # Initialise the elements of the Jacobian
-        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], P.shape[1]))
-        JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
-
-        # The array of indices
-        i = np.arange(z.size)
-
-        # Derivatives wrt yaw
-        d_da = self.d_da(a, Rb, Rc, X[index], z)
-        JP[i, 0, z, 0] = d_da[0]  # dy_prd_da
-        JP[i, 1, z, 0] = d_da[1]  # dx_prd_da
-
-        # Derivatives wrt pitch
-        d_db = self.d_db(Ra, b, Rc, X[index], z)
-        JP[i, 0, z, 1] = d_db[0]  # dy_prd_db
-        JP[i, 1, z, 1] = d_db[1]  # dx_prd_db
-
-        # Derivatives wrt roll
-        d_dc = self.d_dc(Ra, Rb, c, X[index], z)
-        JP[i, 0, z, 2] = d_dc[0]  # dy_prd_dc
-        JP[i, 1, z, 2] = d_dc[1]  # dx_prd_dc
-
-        # Derivatives wrt dy and dx
-        JP[i, 0, z, 3] = 1  # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
-        JP[i, 1, z, 3] = 0  # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
-        JP[i, 0, z, 4] = 0  # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
-        JP[i, 1, z, 4] = 1  # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
-
-        # Derivatives wrt point parameters
-        d_dX = self.d_dX(R, z)
-        JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
-        JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
-        JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
-        JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
-        JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
-        JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
-
-        # Return the Jacobian
-        JP = JP.reshape((self.contours.shape[0] * 2, P.size))
-        JX = JX.reshape((self.contours.shape[0] * 2, X.size))
-        J = np.concatenate([JP, JX], axis=1)
-        return J
 
 
 def make_target(
