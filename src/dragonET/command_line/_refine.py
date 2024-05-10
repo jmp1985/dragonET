@@ -5,6 +5,7 @@
 #
 # Author: James Parkhurst
 #
+import os
 import time
 from argparse import ArgumentParser
 from typing import List
@@ -93,6 +94,17 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         choices=["a", "b", "c"],
         help="Fix parameters in refinement",
     )
+    parser.add_argument(
+        "--plots_out",
+        type=str,
+        default="plots",
+        dest="plots_out",
+        help=(
+            """
+            The directory to write some plots
+            """
+        ),
+    )
 
     return parser
 
@@ -112,6 +124,7 @@ def refine_impl(args):
         args.model_out,
         args.points_in,
         args.points_out,
+        args.plots_out,
         args.fix,
     )
 
@@ -136,30 +149,6 @@ class TargetBase:
     # The columns to refine
     cols: list = []
 
-    # P lower bounds
-    P_lower = [
-        -np.radians(180),
-        -np.radians(90),
-        -np.radians(90),
-        -np.inf,
-        -np.inf,
-    ]
-
-    # P upper bounds
-    P_upper = [
-        np.radians(180),
-        np.radians(90),
-        np.radians(90),
-        np.inf,
-        np.inf,
-    ]
-
-    # X upper bounds
-    X_lower = -np.inf
-
-    # X lower bounds
-    X_upper = np.inf
-
     def __init__(
         self, P: np.ndarray, X: np.ndarray, image_size: tuple, contours: np.ndarray
     ):
@@ -167,10 +156,35 @@ class TargetBase:
         Initialise the target
 
         """
+        # Save some stuff
         self.P = P
         self.X = X
         self.image_size = image_size
         self.contours = contours
+
+        # P lower bounds
+        self.P_lower = [
+            -np.radians(180),
+            -np.radians(90),
+            -np.radians(90),
+            -max(image_size),
+            -max(image_size),
+        ]
+
+        # P upper bounds
+        self.P_upper = [
+            np.radians(180),
+            np.radians(90),
+            np.radians(90),
+            max(image_size),
+            max(image_size),
+        ]
+
+        # X upper bounds
+        self.X_lower = -max(image_size)
+
+        # X lower bounds
+        self.X_upper = max(image_size)
 
     def flatten_parameters(self, P: np.ndarray, X: np.ndarray) -> np.ndarray:
         """
@@ -812,6 +826,7 @@ def _refine(
     model_out: str,
     points_in: str,
     points_out: str = None,
+    plots_out: str = None,
     fix: list = None,
 ):
     """
@@ -835,11 +850,98 @@ def _refine(
         print("Writing model to %s" % filename)
         yaml.safe_dump(model, open(filename, "w"), default_flow_style=None)
 
+    def write_angles_vs_image_number(P, directory):
+        width = 0.0393701 * 190
+        height = (6 / 8) * width
+        fig, ax = pylab.subplots(
+            ncols=1, figsize=(width, height), constrained_layout=True
+        )
+        ax.plot(P[:, 0], label="a")
+        ax.plot(P[:, 1], label="b")
+        ax.plot(P[:, 2], label="c")
+        ax.set_xlabel("Image number")
+        ax.set_ylabel("Angle (degrees)")
+        ax.set_title("Angle vs image number")
+        ax.legend()
+        fig.savefig(os.path.join(directory, "angles_vs_image_number.png"), dpi=600)
+
+    def write_xy_shift_distribution(P, directory):
+        width = 0.0393701 * 190
+        height = (6 / 8) * width
+        fig, ax = pylab.subplots(
+            ncols=2,
+            figsize=(width, height),
+            constrained_layout=True,
+            sharex=True,
+            sharey=True,
+        )
+        ax[0].hist(P[:, 3].flatten())
+        ax[1].hist(P[:, 4].flatten())
+        ax[0].set_xlabel("Y shift")
+        ax[1].set_xlabel("X shift")
+        fig.suptitle("Distribution of X and Y shifts")
+        fig.savefig(os.path.join(directory, "xy_shift_histogram.png"), dpi=600)
+
+    def write_points_distribution(P, directory):
+        width = 0.0393701 * 190
+        height = (6 / 8) * width
+        fig, ax = pylab.subplots(
+            ncols=3,
+            figsize=(width, height),
+            constrained_layout=True,
+            sharex=True,
+            sharey=True,
+        )
+        ax[0].hist(X[:, 0].flatten())
+        ax[1].hist(X[:, 1].flatten())
+        ax[2].hist(X[:, 2].flatten())
+        ax[0].set_xlabel("Z")
+        ax[1].set_xlabel("Y")
+        ax[2].set_xlabel("X")
+        fig.suptitle("Distribution of points")
+        fig.savefig(os.path.join(directory, "points_histogram.png"), dpi=600)
+
+    def write_plots(P, X, directory):
+        print("Writing plots to %s" % directory)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        write_angles_vs_image_number(P, directory)
+        write_xy_shift_distribution(P, directory)
+        write_points_distribution(X, directory)
+
     def get_contours(points):
         return np.array(
             [tuple(x) for x in points["contours"]],
             dtype=[("index", "int"), ("z", "int"), ("y", "float"), ("x", "float")],
         )
+
+    def get_cycles(fix):
+        # Check fix values are consistent
+        if fix:
+            fix = sorted(fix)
+            if "a" in fix:
+                if fix != ["a", "b", "c"]:
+                    print("- Warning: fixing 'a' implies fixing 'b' and 'c'")
+                    fix = ["a", "b", "c"]
+            elif "b" in fix:
+                if fix != ["b", "c"]:
+                    print("- Warning: fixing 'b' implies fixing 'c'")
+                    fix = ["b", "c"]
+
+        # Refine with just translation
+        # Then refine with translation and yaw
+        # Then refine with translation, yaw and pitch
+        # Then refine with translation, yaw, pitch and roll
+        cycles = [["a", "b", "c"]]
+        if not fix or "a" not in fix:
+            cycles.append(["b", "c"])
+        if not fix or "b" not in fix:
+            cycles.append(["c"])
+        if not fix or "c" not in fix:
+            cycles.append([])
+
+        # Return cycles
+        return cycles
 
     # Read the model
     model = read_model(model_in)
@@ -875,38 +977,9 @@ def _refine(
         # Initialise the point parameters
         X = np.zeros((num_points, 3))
 
-    # Check fix values
-    if fix and "a" in fix:
-        if "b" not in fix or "c" not in fix:
-            print("- Warning: fixing 'a' implies fixing 'b' and 'c'")
-        fix = ["a", "b", "c"]
-    if fix and "b" in fix:
-        if "c" not in fix:
-            print("- Warning: fixing 'b' implies fixing 'c'")
-        fix = ["b", "c"]
-
-    # Refine with just translation
-    # Then refine with translation and yaw
-    # Then refine with translation, yaw and pitch
-    # Then refine with translation, yaw, pitch and roll
-    cycles = [["a", "b", "c"]]
-    if not fix or "a" not in fix:
-        cycles.append(["b", "c"])
-    if not fix or "b" not in fix:
-        cycles.append(["c"])
-    if not fix or "c" not in fix:
-        cycles.append([])
-
     # Run through the cycles of refinement
-    for fixed in cycles:
+    for fixed in get_cycles(fix):
         P, X, rmsd = refine_model(P, X, image_size, contours, fix=fixed)
-
-    # Plot the parameters
-    pylab.plot(np.degrees(P[:, 0]), label="Yaw")
-    pylab.plot(np.degrees(P[:, 1]), label="Pitch")
-    pylab.plot(np.degrees(P[:, 2]), label="Roll")
-    pylab.legend()
-    pylab.show()
 
     # Update the model and convert back to degrees
     P[:, 0] = np.degrees(P[:, 0])
@@ -923,6 +996,10 @@ def _refine(
     # Save the refined points
     if points_out:
         write_points(points, points_out)
+
+    # Save some plots of the geometry
+    if plots_out:
+        write_plots(P, X, plots_out)
 
 
 if __name__ == "__main__":
