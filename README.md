@@ -1,6 +1,6 @@
 # dragonET
 
-> **dragonET**: **D**odgy **R**econstruction and **A**lignment of **G**eneral **O**rientatio**N**s for **E**lectron **T**omography
+> **dragonET**: **D**odgy **R**econstruction and **A**lignment from **G**eneral **O**rientatio**N**s for **E**lectron **T**omography
 
 ![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)
 [![Building](https://github.com/jmp1985/dragonET/actions/workflows/python-package.yml/badge.svg)](https://github.com/jmp1985/dragonET/actions/workflows/python-package.yml)
@@ -28,7 +28,7 @@ Please use the [GitHub issue tracker](https://github.com/jmp1985/dragonET/issues
 
 ## Contributions
 
-If you would like to help contribute to profet, please read our [contribution](CONTRIBUTING.md) guide and [code of conduct](CODE_OF_CONDUCT.md).
+If you would like to help contribute to dragonET, please read our [contribution](CONTRIBUTING.md) guide and [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
