@@ -94,6 +94,13 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         help="Fix parameters in refinement",
     )
     parser.add_argument(
+        "--reference_image",
+        type=int,
+        default=None,
+        dest="reference_image",
+        help="Set the reference image, if not set the angle closest to zero will be chosen",
+    )
+    parser.add_argument(
         "--plots_out",
         type=str,
         default="plots",
@@ -125,6 +132,7 @@ def refine_impl(args):
         args.points_out,
         args.plots_out,
         args.fix,
+        args.reference_image,
     )
 
     # Write some timing stats
@@ -151,7 +159,8 @@ class Target:
         X: np.ndarray,
         image_size: tuple,
         contours: np.ndarray,
-        cols: None,
+        cols: list = None,
+        reference_image: int = None,
     ):
         """
         Initialise the target
@@ -162,6 +171,13 @@ class Target:
         self.X = X
         self.image_size = image_size
         self.contours = contours
+
+        # Set the reference image. If the given index is None then select the
+        # index of the smallest absolute angle
+        if reference_image is None:
+            self.reference_image = np.argmin(np.abs(P[:, 2]))
+        else:
+            self.reference_image = reference_image
 
         # Set the columns
         if cols is None:
@@ -174,8 +190,8 @@ class Target:
             -np.radians(180),
             -np.radians(90),
             -np.radians(90),
-            -max(image_size),
-            -max(image_size),
+            -np.inf,
+            -np.inf,
         ]
 
         # P upper bounds
@@ -183,8 +199,8 @@ class Target:
             np.radians(180),
             np.radians(90),
             np.radians(90),
-            max(image_size),
-            max(image_size),
+            np.inf,
+            np.inf,
         ]
 
         # X upper bounds
@@ -291,7 +307,7 @@ class Target:
         JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
         JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
 
-        # The array of indices
+        # The observation index
         i = np.arange(z.size)
 
         # Derivatives wrt image parameters
@@ -328,6 +344,18 @@ class Target:
         P_upper = np.repeat(
             [np.array(self.P_upper)[self.cols]], self.P.shape[0], axis=0
         )
+
+        # Set the bounds for the reference image
+        # The tilt angle and translation will be fixed
+        # FIXME Better to just not refine these parameters
+        for i, c in enumerate(self.cols):
+            if c in [2, 3, 4]:
+                P_lower[self.reference_image, i] = (
+                    self.P[self.reference_image, c] - 1e-15
+                )
+                P_upper[self.reference_image, i] = (
+                    self.P[self.reference_image, c] + 1e-15
+                )
 
         # X lower and upper bounds
         X_lower = np.full(self.X.shape, self.X_lower)
@@ -581,6 +609,7 @@ def make_target(
     image_size: np.ndarray,
     contours: np.ndarray,
     fix: list = None,
+    reference_image: int = None,
 ):
     """
     Make the refinement target
@@ -599,7 +628,7 @@ def make_target(
             cols = cols[np.where(cols != column_index[item])[0]]
 
     # Return the target
-    return Target(P, X, image_size, contours, cols)
+    return Target(P, X, image_size, contours, cols, reference_image)
 
 
 def refine_model(
@@ -608,6 +637,7 @@ def refine_model(
     image_size: np.ndarray,
     contours: np.ndarray,
     fix: list,
+    reference_image: int = None,
 ) -> tuple:
     """
     Estimate the parameters using least squares
@@ -616,7 +646,7 @@ def refine_model(
     print("Refining model with %s fixed" % str(fix))
 
     # Make the target
-    target = make_target(P, X, image_size, contours, fix)
+    target = make_target(P, X, image_size, contours, fix, reference_image)
 
     # Do the optimisation
     result = scipy.optimize.least_squares(
@@ -645,6 +675,7 @@ def _refine(
     points_out: str = None,
     plots_out: str = None,
     fix: str = None,
+    reference_image: int = None,
 ):
     """
     Do the refinement
@@ -681,6 +712,20 @@ def _refine(
         ax.set_title("Angle vs image number")
         ax.legend()
         fig.savefig(os.path.join(directory, "angles_vs_image_number.png"), dpi=600)
+
+    def write_shift_vs_image_number(P, directory):
+        width = 0.0393701 * 190
+        height = (6 / 8) * width
+        fig, ax = pylab.subplots(
+            ncols=1, figsize=(width, height), constrained_layout=True
+        )
+        ax.plot(P[:, 3], label="y")
+        ax.plot(P[:, 4], label="x")
+        ax.set_xlabel("Image number")
+        ax.set_ylabel("Shift")
+        ax.set_title("Shift vs image number")
+        ax.legend()
+        fig.savefig(os.path.join(directory, "shift_vs_image_number.png"), dpi=600)
 
     def write_xy_shift_distribution(P, directory):
         width = 0.0393701 * 190
@@ -723,6 +768,7 @@ def _refine(
         if not os.path.exists(directory):
             os.makedirs(directory)
         write_angles_vs_image_number(P, directory)
+        write_shift_vs_image_number(P, directory)
         write_xy_shift_distribution(P, directory)
         write_points_distribution(X, directory)
 
@@ -791,7 +837,7 @@ def _refine(
 
     # Run through the cycles of refinement
     for fixed in get_cycles(fix):
-        P, X, rmsd = refine_model(P, X, image_size, contours, fix=fixed)
+        P, X, rmsd = refine_model(P, X, image_size, contours, fixed, reference_image)
 
     # Update the model and convert back to degrees
     P[:, 0] = np.degrees(P[:, 0])
