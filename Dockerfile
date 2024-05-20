@@ -18,7 +18,9 @@ RUN apt install -y \
   fontconfig \
   mesa-utils \
   qt6-base-dev \
-  libc6
+  libc6 \
+  libxcb-cursor0 \
+  libxcb-xinerama0
 
 RUN pip install \
   numpy \
