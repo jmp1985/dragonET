@@ -17,7 +17,7 @@ RUN apt install -y \
   libtool \
   fontconfig \
   mesa-utils \
-  qt5-default \
+  qt6-base-dev \
   libc6
 
 RUN pip install \
