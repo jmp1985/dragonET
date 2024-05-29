@@ -214,9 +214,12 @@ class Target:
 
         # Set the penalty term for the regularisation
         # FIXME - set better values
-        self.penalty = np.zeros_like(P)
-        self.penalty[:, 3] = 1e-5
-        self.penalty[:, 4] = 1e-5
+        self.weight = np.zeros_like(P)
+        self.weight[:, 0] = 0  # Yaw
+        self.weight[:, 1] = 0  # Pitch
+        self.weight[:, 2] = 1  # Roll (tilt)
+        self.weight[:, 3] = 1e-5  # Dy
+        self.weight[:, 4] = 1e-5  # Dx
 
         # Regularise on pitch, dy and dx
         self.cols_with_penalty = [i for i, c in enumerate(self.cols) if c in [3, 4]]
@@ -338,16 +341,21 @@ class Target:
         r = np.zeros((contours.shape[0], 2))
         r[:, 0] = y_prd - y_obs
         r[:, 1] = x_prd - x_obs
+        r = r.flatten()
 
         # Print if verbose
         if self.verbose:
             print(np.sqrt(np.mean(r**2)))
 
-        # Add regularisation terms
-        r = r.flatten()
+        # Add regularisation terms. Here we assume that the initial parameter
+        # estimates are our prior distribution mean values and the weights are
+        # the prior distribution inverse variance weights. So we add penalty
+        # terms which force the parameter estimates to be close to their
+        # initial values
+        P_diff = P - self.P
         for col in self.cols_with_penalty:
             r = np.concatenate(
-                [r, self.penalty[:, self.cols[col]] * P[:, self.cols[col]].flatten()]
+                [r, self.weight[:, self.cols[col]] * P_diff[:, self.cols[col]]]
             )
 
         # Return the residuals
@@ -407,7 +415,7 @@ class Target:
         k = np.arange(P.shape[0])
         for col in self.cols_with_penalty:
             J_col = np.zeros(shape=(P.shape[0], J.shape[1]))
-            J_col[k, k * len(self.cols) + col] = self.penalty[:, self.cols[col]]
+            J_col[k, k * len(self.cols) + col] = self.weight[:, self.cols[col]]
             J = np.concatenate([J, J_col], axis=0)
 
         # Return Jacobian
@@ -756,7 +764,7 @@ def refine_model(
     print("RMSD: %f" % rmsd)
 
     # Return the refined parameters and RMSD
-    return P, X, rmsd
+    return P, X, result.jac, rmsd
 
 
 def _refine(
@@ -856,7 +864,21 @@ def _refine(
         fig.suptitle("Distribution of points")
         fig.savefig(os.path.join(directory, "points_histogram.png"), dpi=600)
 
-    def write_plots(P, X, directory):
+    def write_covariance_matrix(Sigma, directory):
+        width = 0.0393701 * 190
+        height = (6 / 8) * width
+        fig, ax = pylab.subplots(
+            ncols=1,
+            figsize=(width, height),
+            constrained_layout=True,
+            sharex=True,
+            sharey=True,
+        )
+        ax.imshow(Sigma)
+        ax.axis("off")
+        fig.savefig(os.path.join(directory, "covariance_matrix.png"), dpi=600)
+
+    def write_plots(P, X, Sigma, directory):
         print("Writing plots to %s" % directory)
         if not os.path.exists(directory):
             os.makedirs(directory)
@@ -864,6 +886,7 @@ def _refine(
         write_shift_vs_image_number(P, directory)
         write_xy_shift_distribution(P, directory)
         write_points_distribution(X, directory)
+        write_covariance_matrix(Sigma, directory)
 
     def write_info(info, filename):
         print("Writing info to %s" % filename)
@@ -1001,7 +1024,7 @@ def _refine(
 
     # Run through the cycles of refinement
     for fixed in get_cycles(fix):
-        P, X, rmsd = refine_model(
+        P, X, J, rmsd = refine_model(
             P, X, image_size, contours, fixed, reference_image, verbose
         )
 
@@ -1010,6 +1033,9 @@ def _refine(
     P[:, 1] = np.degrees(P[:, 1])
     P[:, 2] = np.degrees(P[:, 2])
     model["transform"] = P.tolist()
+
+    # Compute the covariance matrix of the parameters
+    Sigma = np.linalg.inv(J.T @ J) * rmsd**2
 
     # Update the points
     points["coordinates"] = X.tolist()
@@ -1023,7 +1049,7 @@ def _refine(
 
     # Save some plots of the geometry
     if plots_out:
-        write_plots(P, X, plots_out)
+        write_plots(P, X, Sigma, plots_out)
 
     # Save some refinement information
     if info_out:
