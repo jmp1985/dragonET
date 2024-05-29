@@ -220,7 +220,7 @@ class Target:
         self.penalty[:, 4] = 1e-3
 
         # Regularise on pitch, dy and dx
-        self.cols_with_penalty = [c for c in [1, 3, 4] if c in self.cols]
+        self.cols_with_penalty = [i for i, c in enumerate(self.cols) if c in [3, 4]]
 
         # P lower bounds
         self.P_lower = [
@@ -347,8 +347,9 @@ class Target:
         # Add regularisation terms
         r = r.flatten()
         for col in self.cols_with_penalty:
-            if col in self.cols:
-                r = np.concatenate([r, self.penalty[:, col] * P[:, col].flatten()])
+            r = np.concatenate(
+                [r, self.penalty[:, self.cols[col]] * P[:, self.cols[col]].flatten()]
+            )
 
         # Return the residuals
         return r
@@ -405,11 +406,10 @@ class Target:
 
         # Add Jacobian elements for regularization
         k = np.arange(P.shape[0])
-        for j, col in enumerate(self.cols):
-            if col in self.cols_with_penalty:
-                J_col = np.zeros(shape=(P.shape[0], J.shape[1]))
-                J_col[k, k * len(self.cols) + j] = self.penalty[:, col]
-                J = np.concatenate([J, J_col], axis=0)
+        for col in self.cols_with_penalty:
+            J_col = np.zeros(shape=(P.shape[0], J.shape[1]))
+            J_col[k, k * len(self.cols) + col] = self.penalty[:, self.cols[col]]
+            J = np.concatenate([J, J_col], axis=0)
 
         # Return Jacobian
         return J
