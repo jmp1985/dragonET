@@ -111,6 +111,29 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
             """
         ),
     )
+    parser.add_argument(
+        "--info_out",
+        type=str,
+        default=None,
+        dest="info_out",
+        help=(
+            """
+            A YAML file containing refinement information.
+            """
+        ),
+    )
+    parser.add_argument(
+        "-v",
+        type=bool,
+        default=False,
+        dest="verbose",
+        action="store_true",
+        help=(
+            """
+            Set verbose output
+            """
+        ),
+    )
 
     return parser
 
@@ -131,8 +154,10 @@ def refine_impl(args):
         args.points_in,
         args.points_out,
         args.plots_out,
+        args.info_out,
         args.fix,
         args.reference_image,
+        args.verbose,
     )
 
     # Write some timing stats
@@ -161,6 +186,7 @@ class Target:
         contours: np.ndarray,
         cols: list = None,
         reference_image: int = None,
+        verbose: bool = False,
     ):
         """
         Initialise the target
@@ -171,6 +197,7 @@ class Target:
         self.X = X
         self.image_size = image_size
         self.contours = contours
+        self.verbose = verbose
 
         # Set the reference image. If the given index is None then select the
         # index of the smallest absolute angle
@@ -184,6 +211,16 @@ class Target:
             self.cols = list(range(P.shape[1]))
         else:
             self.cols = cols
+
+        # Set the penalty term for the regularisation
+        # FIXME - set better values
+        self.penalty = np.zeros_like(P)
+        self.penalty[:, 1] = 1e-3
+        self.penalty[:, 3] = 1e-3
+        self.penalty[:, 4] = 1e-3
+
+        # Regularise on pitch, dy and dx
+        self.cols_with_penalty = [c for c in [1, 3, 4] if c in self.cols]
 
         # P lower bounds
         self.P_lower = [
@@ -208,6 +245,33 @@ class Target:
 
         # X lower bounds
         self.X_upper = max(image_size)
+
+        # Set the initial parameters
+        self._parameters = self.flatten_parameters(self.P, self.X)
+
+    @property
+    def parameters(self) -> np.ndarray:
+        """
+        Get the initial parameters
+
+        """
+        return self._parameters
+
+    @property
+    def num_parameters(self) -> int:
+        """
+        Get the number of parameters
+
+        """
+        return len(self.parameters)
+
+    @property
+    def num_equations(self) -> int:
+        """
+        Get the number of equations
+
+        """
+        return len(self.contours) * 2 + self.P.shape[0] * len(self.cols_with_penalty)
 
     def flatten_parameters(self, P: np.ndarray, X: np.ndarray) -> np.ndarray:
         """
@@ -276,9 +340,18 @@ class Target:
         r[:, 0] = y_prd - y_obs
         r[:, 1] = x_prd - x_obs
 
+        # Print if verbose
+        if self.verbose:
+            print(np.sqrt(np.mean(r**2)))
+
+        # Add regularisation terms
+        r = r.flatten()
+        for col in self.cols_with_penalty:
+            if col in self.cols:
+                r = np.concatenate([r, self.penalty[:, col] * P[:, col].flatten()])
+
         # Return the residuals
-        # print(np.sqrt(np.mean(r**2)))
-        return r.flatten()
+        return r
 
     def jacobian(self, params: np.ndarray) -> np.ndarray:
         """
@@ -325,10 +398,20 @@ class Target:
         JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
         JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
 
-        # Return the Jacobian
+        # Construct the Jacobian
         JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
         JX = JX.reshape((self.contours.shape[0] * 2, X.size))
         J = np.concatenate([JP, JX], axis=1)
+
+        # Add Jacobian elements for regularization
+        k = np.arange(P.shape[0])
+        for j, col in enumerate(self.cols):
+            if col in self.cols_with_penalty:
+                J_col = np.zeros(shape=(P.shape[0], J.shape[1]))
+                J_col[k, k * len(self.cols) + j] = self.penalty[:, col]
+                J = np.concatenate([J, J_col], axis=0)
+
+        # Return Jacobian
         return J
 
     def bounds(self) -> tuple:
@@ -345,11 +428,10 @@ class Target:
             [np.array(self.P_upper)[self.cols]], self.P.shape[0], axis=0
         )
 
-        # Set the bounds for the reference image
-        # The tilt angle and translation will be fixed
+        # Set the bounds for the reference image The tilt angle will be fixed
         # FIXME Better to just not refine these parameters
         for i, c in enumerate(self.cols):
-            if c in [2, 3, 4]:
+            if c in [2]:
                 P_lower[self.reference_image, i] = (
                     self.P[self.reference_image, c] - 1e-15
                 )
@@ -610,6 +692,7 @@ def make_target(
     contours: np.ndarray,
     fix: list = None,
     reference_image: int = None,
+    verbose: bool = False,
 ):
     """
     Make the refinement target
@@ -628,7 +711,7 @@ def make_target(
             cols = cols[np.where(cols != column_index[item])[0]]
 
     # Return the target
-    return Target(P, X, image_size, contours, cols, reference_image)
+    return Target(P, X, image_size, contours, cols, reference_image, verbose)
 
 
 def refine_model(
@@ -638,6 +721,7 @@ def refine_model(
     contours: np.ndarray,
     fix: list,
     reference_image: int = None,
+    verbose: bool = False,
 ) -> tuple:
     """
     Estimate the parameters using least squares
@@ -646,12 +730,20 @@ def refine_model(
     print("Refining model with %s fixed" % str(fix))
 
     # Make the target
-    target = make_target(P, X, image_size, contours, fix, reference_image)
+    target = make_target(P, X, image_size, contours, fix, reference_image, verbose)
+
+    # Get the initial parameters
+    print("Num parameters: %d" % target.num_parameters)
+    print("Num equations: %d" % target.num_equations)
+
+    # Check number of parameters
+    if target.num_parameters > target.num_equations:
+        print("- Warning: more parameters than equations")
 
     # Do the optimisation
     result = scipy.optimize.least_squares(
         target.residuals,
-        target.flatten_parameters(P, X),
+        target.parameters,
         jac=target.jacobian,
         bounds=target.bounds(),
     )
@@ -674,8 +766,10 @@ def _refine(
     points_in: str,
     points_out: str = None,
     plots_out: str = None,
+    info_out: str = None,
     fix: str = None,
     reference_image: int = None,
+    verbose: bool = False,
 ):
     """
     Do the refinement
@@ -772,6 +866,10 @@ def _refine(
         write_xy_shift_distribution(P, directory)
         write_points_distribution(X, directory)
 
+    def write_info(info, filename):
+        print("Writing info to %s" % filename)
+        yaml.safe_dump(info, open(filename, "w"), default_flow_style=None)
+
     def get_contours(points):
         return np.array(
             [tuple(x) for x in points["contours"]],
@@ -801,6 +899,68 @@ def _refine(
         # Return cycles
         return cycles
 
+    def check_num_images(num_images, contours):
+        # Check that the number of images matches the number of images
+        # represented in the list of contours
+        obs_images = len(set(contours["z"]))
+        if num_images != obs_images:
+            raise RuntimeError(
+                "Expected %d images in contours, got %d" % (num_images, obs_images)
+            )
+
+    def check_obs_per_image(contours):
+        # Check that each image has atleast 2 observations
+        obs_per_image = np.bincount(contours["z"])
+        if np.any(obs_per_image < 2):
+            raise RuntimeError(
+                "The following images have less than 2 observations: %s"
+                % ("\n".join(map(str, np.where(obs_per_image < 2)[0])))
+            )
+
+    def check_obs_per_point(contours):
+        # Check that each point has at least 2 observations
+        obs_per_point = np.bincount(contours["index"])
+        if np.any(obs_per_point < 2):
+            raise RuntimeError(
+                "The following points have less than 2 observations: %s"
+                % ("\n".join(map(str, np.where(obs_per_point < 2)[0])))
+            )
+
+    def check_connections(contours):
+        # Create lookup tables to check each point and each image is touched
+        lookup_image = np.zeros(len(set(contours["z"])))
+        lookup_point = np.zeros(len(set(contours["index"])))
+
+        def traverse_point(contours, index):
+            if not lookup_point[index]:
+                lookup_point[index] = 1
+                for z in contours["z"][contours["index"] == index]:
+                    traverse_image(contours, z)
+
+        def traverse_image(contours, z):
+            if not lookup_image[z]:
+                lookup_image[z] = 1
+                for index in contours["index"][contours["z"] == z]:
+                    traverse_point(contours, index)
+
+        # Traverse the contours and check that each image and each point is
+        # linked to all other points and images
+        traverse_image(contours, contours["z"][0])
+
+        # Check if any images are not touched
+        if np.any(lookup_image == 0):
+            raise RuntimeError(
+                "The following images are not linked: %s"
+                % ("\n".join(map(str, np.where(lookup_image == 0)[0])))
+            )
+
+        # Check if any points are not touched
+        if np.any(lookup_point == 0):
+            raise RuntimeError(
+                "The following point are not linked: %s"
+                % ("\n".join(map(str, np.where(lookup_point == 0)[0])))
+            )
+
     # Read the model
     model = read_model(model_in)
 
@@ -822,7 +982,12 @@ def _refine(
     # The number of images and points
     num_images = P.shape[0]
     num_points = len(set(contours["index"]))
-    assert num_images == len(set(contours["z"]))
+
+    # Perform some checks on the contours
+    check_num_images(num_images, contours)
+    check_obs_per_image(contours)
+    check_obs_per_point(contours)
+    check_connections(contours)
     print("Num images: %d" % num_images)
     print("Num contours: %d" % num_points)
     print("Num observations: %d" % len(contours))
@@ -837,7 +1002,9 @@ def _refine(
 
     # Run through the cycles of refinement
     for fixed in get_cycles(fix):
-        P, X, rmsd = refine_model(P, X, image_size, contours, fixed, reference_image)
+        P, X, rmsd = refine_model(
+            P, X, image_size, contours, fixed, reference_image, verbose
+        )
 
     # Update the model and convert back to degrees
     P[:, 0] = np.degrees(P[:, 0])
@@ -858,6 +1025,13 @@ def _refine(
     # Save some plots of the geometry
     if plots_out:
         write_plots(P, X, plots_out)
+
+    # Save some refinement information
+    if info_out:
+        info = {
+            "rmsd": float(rmsd),
+        }
+        write_info(info, info_out)
 
 
 if __name__ == "__main__":
