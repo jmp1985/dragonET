@@ -215,9 +215,8 @@ class Target:
         # Set the penalty term for the regularisation
         # FIXME - set better values
         self.penalty = np.zeros_like(P)
-        self.penalty[:, 1] = 1e-3
-        self.penalty[:, 3] = 1e-3
-        self.penalty[:, 4] = 1e-3
+        self.penalty[:, 3] = 1e-5
+        self.penalty[:, 4] = 1e-5
 
         # Regularise on pitch, dy and dx
         self.cols_with_penalty = [i for i, c in enumerate(self.cols) if c in [3, 4]]
