@@ -124,7 +124,6 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
     )
     parser.add_argument(
         "-v",
-        type=bool,
         default=False,
         dest="verbose",
         action="store_true",
@@ -218,11 +217,11 @@ class Target:
         self.weight[:, 0] = 0  # Yaw
         self.weight[:, 1] = 0  # Pitch
         self.weight[:, 2] = 1  # Roll (tilt)
-        self.weight[:, 3] = 1e-5  # Dy
-        self.weight[:, 4] = 1e-5  # Dx
+        self.weight[:, 3] = 1e-7  # Dy
+        self.weight[:, 4] = 1e-7  # Dx
 
         # Regularise on pitch, dy and dx
-        self.cols_with_penalty = [i for i, c in enumerate(self.cols) if c in [3, 4]]
+        self.cols_with_penalty = [i for i, c in enumerate(self.cols) if c in [2, 3, 4]]
 
         # P lower bounds
         self.P_lower = [
@@ -440,10 +439,10 @@ class Target:
         for i, c in enumerate(self.cols):
             if c in [2]:
                 P_lower[self.reference_image, i] = (
-                    self.P[self.reference_image, c] - 1e-15
+                    self.P[self.reference_image, c] - 1e-7
                 )
                 P_upper[self.reference_image, i] = (
-                    self.P[self.reference_image, c] + 1e-15
+                    self.P[self.reference_image, c] + 1e-7
                 )
 
         # X lower and upper bounds
@@ -1028,14 +1027,17 @@ def _refine(
             P, X, image_size, contours, fixed, reference_image, verbose
         )
 
+    # Compute the covariance matrix of the parameters
+    Sigma = np.linalg.inv(J.T @ J) * rmsd**2
+
     # Update the model and convert back to degrees
     P[:, 0] = np.degrees(P[:, 0])
     P[:, 1] = np.degrees(P[:, 1])
     P[:, 2] = np.degrees(P[:, 2])
     model["transform"] = P.tolist()
 
-    # Compute the covariance matrix of the parameters
-    Sigma = np.linalg.inv(J.T @ J) * rmsd**2
+    # Compute the weights on the parameters
+    model["variance"] = np.diagonal(Sigma)[: P.size].reshape(P.shape).tolist()
 
     # Update the points
     points["coordinates"] = X.tolist()
