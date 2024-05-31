@@ -185,6 +185,7 @@ class Target:
         contours: np.ndarray,
         cols: list = None,
         reference_image: int = None,
+        fix_points: bool = False,
         verbose: bool = False,
     ):
         """
@@ -197,6 +198,7 @@ class Target:
         self.image_size = image_size
         self.contours = contours
         self.verbose = verbose
+        self.fix_points = fix_points
 
         # Set the reference image. If the given index is None then select the
         # index of the smallest absolute angle
@@ -215,21 +217,22 @@ class Target:
         # FIXME - set better values
         self.weight = np.zeros_like(P)
         self.weight[:, 0] = 0  # Yaw
-        self.weight[:, 1] = 0  # Pitch
-        self.weight[:, 2] = 1  # Roll (tilt)
+        self.weight[:, 1] = 1e-7  # Pitch
+        self.weight[:, 2] = 1e-7  # Roll (tilt)
         self.weight[:, 3] = 1e-7  # Dy
         self.weight[:, 4] = 1e-7  # Dx
 
         # Regularise on pitch, dy and dx
-        self.cols_with_penalty = [i for i, c in enumerate(self.cols) if c in [2, 3, 4]]
+        self.cols_with_penalty = []  # type: ignore
+        # type: ignore # [i for i, c in enumerate(self.cols) if c in [1, 2, 3, 4]]
 
         # P lower bounds
         self.P_lower = [
             -np.radians(180),
             -np.radians(90),
             -np.radians(90),
-            -np.inf,
-            -np.inf,
+            -max(image_size),  # np.inf,
+            -max(image_size),  # np.inf,
         ]
 
         # P upper bounds
@@ -237,8 +240,8 @@ class Target:
             np.radians(180),
             np.radians(90),
             np.radians(90),
-            np.inf,
-            np.inf,
+            max(image_size),  # np.inf,
+            max(image_size),  # np.inf,
         ]
 
         # X upper bounds
@@ -279,7 +282,9 @@ class Target:
         Flatten the parameters to refine
 
         """
-        return np.concatenate([P[:, self.cols].flatten(), X.flatten()])
+        return np.concatenate(
+            [P[:, self.cols].flatten(), X.flatten() if not self.fix_points else []]
+        )
 
     def unflatten_parameters(self, params: np.ndarray) -> tuple:
         """
@@ -287,19 +292,26 @@ class Target:
 
         """
 
-        # The number of image parameters to select
-        size = self.P.shape[0] * len(self.cols)
-
-        # Get the column parameters
-        P_cols, params = params[:size], params[size:]
-        P_cols = P_cols.reshape((-1, len(self.cols)))
-
-        # Get the point parameters
-        X = params.reshape(self.X.shape)
-
         # Construct the image parameters
         P = self.P.copy()
-        P[:, self.cols] = P_cols[:, :]
+
+        # Only set columns if number of columns is > 0
+        if len(self.cols) > 0:
+            # The number of image parameters to select
+            size = self.P.shape[0] * len(self.cols)
+
+            # Get the column parameters
+            P_cols, params = params[:size], params[size:]
+            P_cols = P_cols.reshape((-1, len(self.cols)))
+
+            # Set the column values
+            P[:, self.cols] = P_cols[:, :]
+
+        # Get the point parameters
+        if not self.fix_points:
+            X = params.reshape(self.X.shape)
+        else:
+            X = self.X.copy()
 
         # Return the image and point parameters
         return P, X
@@ -385,7 +397,6 @@ class Target:
 
         # Initialise the elements of the Jacobian
         JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
-        JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
 
         # The observation index
         i = np.arange(z.size)
@@ -396,18 +407,28 @@ class Target:
             JP[i, 0, z, j] = d_dP[0]  # dy_prd_dcol
             JP[i, 1, z, j] = d_dP[1]  # dx_prd_dcol
 
-        # Derivatives wrt point parameters
-        d_dX = self.d_dX(R, z)
-        JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
-        JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
-        JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
-        JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
-        JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
-        JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
+        # Reshape the Jacobian
+        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
+
+        # Initialise elements of the Jacobian
+        if not self.fix_points:
+            JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
+
+            # Derivatives wrt point parameters
+            d_dX = self.d_dX(R, z)
+            JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
+            JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
+            JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
+            JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
+            JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
+            JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
+
+            # Reshape the Jacobian
+            JX = JX.reshape((self.contours.shape[0] * 2, X.size))
+        else:
+            JX = np.zeros((self.contours.shape[0] * 2, 0))
 
         # Construct the Jacobian
-        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
-        JX = JX.reshape((self.contours.shape[0] * 2, X.size))
         J = np.concatenate([JP, JX], axis=1)
 
         # Add Jacobian elements for regularization
@@ -437,7 +458,7 @@ class Target:
         # Set the bounds for the reference image The tilt angle will be fixed
         # FIXME Better to just not refine these parameters
         for i, c in enumerate(self.cols):
-            if c in [2]:
+            if c in [1, 2, 3, 4]:
                 P_lower[self.reference_image, i] = (
                     self.P[self.reference_image, c] - 1e-7
                 )
@@ -450,8 +471,12 @@ class Target:
         X_upper = np.full(self.X.shape, self.X_upper)
 
         # Lower and upper bounds
-        lower = np.concatenate([P_lower.flatten(), X_lower.flatten()])
-        upper = np.concatenate([P_upper.flatten(), X_upper.flatten()])
+        lower = np.concatenate(
+            [P_lower.flatten(), X_lower.flatten() if not self.fix_points else []]
+        )
+        upper = np.concatenate(
+            [P_upper.flatten(), X_upper.flatten() if not self.fix_points else []]
+        )
 
         # Return bounds
         return lower, upper
@@ -697,6 +722,7 @@ def make_target(
     image_size: np.ndarray,
     contours: np.ndarray,
     fix: list = None,
+    fix_points: bool = False,
     reference_image: int = None,
     verbose: bool = False,
 ):
@@ -717,7 +743,35 @@ def make_target(
             cols = cols[np.where(cols != column_index[item])[0]]
 
     # Return the target
-    return Target(P, X, image_size, contours, cols, reference_image, verbose)
+    return Target(
+        P, X, image_size, contours, cols, reference_image, fix_points, verbose
+    )
+
+
+def triangulate(
+    P: np.ndarray,
+    X: np.ndarray,
+    image_size: np.ndarray,
+    contours: np.ndarray,
+) -> np.ndarray:
+    """
+    Do the initial triangulation
+
+    """
+
+    # Triangulate each point independently
+    for i in set(contours["index"]):
+        # Select only observations for index i and reset index to zero
+        contours_i = contours[contours["index"] == i]
+        contours_i["index"] = 0
+
+        # Refine the model keeping everything fixed except the point coordinates
+        _, X[i], _, _ = refine_model(
+            P, X[i : i + 1], image_size, contours_i, fix=["a", "b", "c", "y", "x"]
+        )
+
+    # Return the points
+    return X
 
 
 def refine_model(
@@ -726,6 +780,7 @@ def refine_model(
     image_size: np.ndarray,
     contours: np.ndarray,
     fix: list,
+    fix_points: bool = False,
     reference_image: int = None,
     verbose: bool = False,
 ) -> tuple:
@@ -736,7 +791,9 @@ def refine_model(
     print("Refining model with %s fixed" % str(fix))
 
     # Make the target
-    target = make_target(P, X, image_size, contours, fix, reference_image, verbose)
+    target = make_target(
+        P, X, image_size, contours, fix, fix_points, reference_image, verbose
+    )
 
     # Get the initial parameters
     print("Num parameters: %d" % target.num_parameters)
@@ -745,6 +802,16 @@ def refine_model(
     # Check number of parameters
     if target.num_parameters > target.num_equations:
         print("- Warning: more parameters than equations")
+
+    # result = scipy.optimize.differential_evolution(lambda x: -np.sum(target.residuals(x)**2), list(zip(*target.bounds())))
+
+    # # Unflatten the parameters
+    # P, X = target.unflatten_parameters(result.x)
+
+    # Make the target
+    target = make_target(
+        P, X, image_size, contours, fix, fix_points, reference_image, verbose
+    )
 
     # Do the optimisation
     result = scipy.optimize.least_squares(
@@ -1020,11 +1087,12 @@ def _refine(
     else:
         # Initialise the point parameters
         X = np.zeros((num_points, 3))
+        X = triangulate(P, X, image_size, contours)
 
     # Run through the cycles of refinement
     for fixed in get_cycles(fix):
         P, X, J, rmsd = refine_model(
-            P, X, image_size, contours, fixed, reference_image, verbose
+            P, X, image_size, contours, fixed, False, reference_image, verbose
         )
 
     # Compute the covariance matrix of the parameters
