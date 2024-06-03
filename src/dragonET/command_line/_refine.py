@@ -458,7 +458,7 @@ class Target:
         # Set the bounds for the reference image The tilt angle will be fixed
         # FIXME Better to just not refine these parameters
         for i, c in enumerate(self.cols):
-            if c in [1, 2, 3, 4]:
+            if c in [2]:  # [1, 2, 3, 4]:
                 P_lower[self.reference_image, i] = (
                     self.P[self.reference_image, c] - 1e-7
                 )
