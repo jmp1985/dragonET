@@ -145,7 +145,7 @@ def align(args: List[str] = None):
     align_impl(get_parser().parse_args(args=args))
 
 
-def align_single(X: np.ndarray, Y: np.ndarray) -> tuple:
+def align_single(X: torch.Tensor, Y: torch.Tensor) -> tuple:
     """
 
     Compute the cross coefficient of multiple correlation
@@ -166,10 +166,12 @@ def align_single(X: np.ndarray, Y: np.ndarray) -> tuple:
     # Get the device
     device = X.device
 
+    # Compute normalisation
+    norm = torch.numel(Y)
+
     # Compute correlation coefficients between every reference image
     # This is the slowest part of the calculation. Perhaps we can do it on
     # smaller rebinned data since this just provides correlation weights
-    norm = torch.numel(Y)
     Rxx = torch.zeros((X.shape[0], X.shape[0]), device=device)
     for j in range(Rxx.shape[0]):
         for i in range(j, Rxx.shape[1]):
@@ -222,7 +224,7 @@ def select_reference_images(
     return data
 
 
-def fourier_shift_image(data: np.ndarray, shift) -> np.ndarray:
+def fourier_shift_image(data: torch.Tensor, shift) -> torch.Tensor:
     """
     Transform an image
 
