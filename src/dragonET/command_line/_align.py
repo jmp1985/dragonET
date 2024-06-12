@@ -349,16 +349,15 @@ def align_stack(
         for it in range(max_iter):
             # Apply the real space weights to the target data
             # Align the image with the stack
-            I, (ry, rx) = align_single(
+            I, shift = align_single(
                 fft_data_stack, apply_weights(fft_data[tar_index].to(device))
             )
 
             # Enforce a maximum shift
-            r = np.sqrt(rx**2 + ry**2)
+            r = np.linalg.norm(shift)
             if r > max_shift_px:
-                rx = rx * max_shift_px / r
-                ry = ry * max_shift_px / r
-            shifts[tar_index] += np.array((ry, rx))
+                shift = shift * max_shift_px / r
+            shifts[tar_index] += shift
             print(
                 " Aligning image %d (%.1f deg): shift y = %.1f; shift x = %.1f"
                 % (
@@ -371,7 +370,7 @@ def align_stack(
 
             # Transform the image for the next iteration
             fft_data[tar_index] = fourier_shift_image(
-                fft_data[tar_index].to(device), (ry, rx)
+                fft_data[tar_index].to(device), shift
             ).to(fft_data.device)
 
             # If we move less than the pixel size then break
