@@ -202,8 +202,8 @@ def align_single(X: torch.Tensor, Y: torch.Tensor) -> tuple:
 
 
 def select_reference_images(
-    data: np.ndarray, ref_index: int, max_images: int = 10
-) -> np.ndarray:
+    data: torch.Tensor, ref_index: int, max_images: int = 10
+) -> torch.Tensor:
     """
     Select the N closest reference images to fit to
 
