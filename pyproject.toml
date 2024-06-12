@@ -82,11 +82,14 @@ test = [
 [project.scripts]
 
 "dragonET.new" = "dragonET.command_line:new"
+"dragonET.align" = "dragonET.command_line:align"
 "dragonET.pick" = "dragonET.command_line:pick"
+"dragonET.rebin" = "dragonET.command_line:rebin"
 "dragonET.refine" = "dragonET.command_line:refine"
 "dragonET.reconstruct" = "dragonET.command_line:reconstruct"
 "dragonET.rot90" = "dragonET.command_line:rot90"
 "dragonET.select_sample_axis" = "dragonET.command_line:select_sample_axis"
+"dragonET.transform" = "dragonET.command_line:transform"
 
 #
 # Configure setup tools
