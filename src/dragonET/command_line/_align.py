@@ -166,14 +166,11 @@ def align_single(X: np.ndarray, Y: np.ndarray) -> tuple:
     # Get the device
     device = X.device
 
-    # Get the dtype
-    dtype = X.dtype.to_real()
-
     # Compute correlation coefficients between every reference image
     # This is the slowest part of the calculation. Perhaps we can do it on
     # smaller rebinned data since this just provides correlation weights
     norm = torch.numel(Y)
-    Rxx = torch.zeros((X.shape[0], X.shape[0]), dtype=dtype, device=device)
+    Rxx = torch.zeros((X.shape[0], X.shape[0]), device=device)
     for j in range(Rxx.shape[0]):
         for i in range(j, Rxx.shape[1]):
             Rji = torch.sum(X[j] * X[i].conj()).real
@@ -185,7 +182,7 @@ def align_single(X: np.ndarray, Y: np.ndarray) -> tuple:
     Rxx_inv = torch.linalg.inv(Rxx)
 
     # Compute the cross correlation between the target image and the others
-    c = torch.zeros(X.shape, dtype=dtype, device=device)
+    c = torch.zeros(X.shape, device=device)
     for j in range(c.shape[0]):
         c[j] = torch.fft.ifftshift(torch.fft.ifft2(X[j] * Y.conj())).real / norm
 
