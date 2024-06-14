@@ -128,16 +128,14 @@ def track_stack(projections, P):
 
     """
 
-    def reject_outliers(data, m=2):
-        # Calculate median
-        median = np.median(data, axis=0)
-
-        # Calculate median absolute deviation (MAD)
-        mad = np.median(np.abs(data - median[None, :]), axis=0)
+    def reject_outliers(data, m=2.5):
+        # Compute the IQR
+        q75, q25 = np.percentile(data, [75, 25], axis=0)
+        iqr = q75 - q25
 
         # Define upper and lower bounds for outliers
-        upper_bound = median + m * mad
-        lower_bound = median - m * mad
+        lower_bound = q25 - m * iqr
+        upper_bound = q25 + m * iqr
 
         # Return data without outliers
         select = (
@@ -146,6 +144,24 @@ def track_stack(projections, P):
             & (lower_bound[1] <= data[:, 1])
             & (data[:, 1] <= upper_bound[1])
         )
+        # # Calculate median
+        # median = np.median(data, axis=0)
+
+        # # Calculate median absolute deviation (MAD)
+        # mad = np.median(np.abs(data - median[None, :]), axis=0)
+
+        # # Define upper and lower bounds for outliers
+        # upper_bound = median + m * mad
+        # lower_bound = median - m * mad
+
+        # # Return data without outliers
+        # select = (
+        #     (lower_bound[0] <= data[:, 0])
+        #     & (data[:, 0] <= upper_bound[0])
+        #     & (lower_bound[1] <= data[:, 1])
+        #     & (data[:, 1] <= upper_bound[1])
+        # )
+        print(np.sum(select == False), np.sum(select == True))
         return select
 
     contours = []
@@ -153,94 +169,96 @@ def track_stack(projections, P):
     points_number = 0
     for i in range(0, projections.shape[0] - 1):
         i1 = i
-        i2 = i1 + 1
-        N = 8
+        for j in range(i1 + 1, min(projections.shape[0], i1 + 2)):
+            i2 = j
+            N = 8
 
-        img1 = projections[i1, :, :]  # Query image
-        img2 = projections[i2, :, :]  # Train image
+            img1 = projections[i1, :, :]  # Query image
+            img2 = projections[i2, :, :]  # Train image
 
-        img1 = rebin(img1, np.array(img1.shape) // N)
-        img2 = rebin(img2, np.array(img2.shape) // N)
+            img1 = rebin(img1, np.array(img1.shape) // N)
+            img2 = rebin(img2, np.array(img2.shape) // N)
 
-        img1 = img1.astype("float32")
-        img2 = img2.astype("float32")
+            img1 = img1.astype("float32")
+            img2 = img2.astype("float32")
 
-        descriptor_extractor = SIFT(upsampling=1.0, c_dog=500)
+            descriptor_extractor = SIFT(upsampling=1.0, c_dog=500)
 
-        descriptor_extractor.detect_and_extract(img1)
-        keypoints1 = descriptor_extractor.keypoints
-        descriptors1 = descriptor_extractor.descriptors
+            descriptor_extractor.detect_and_extract(img1)
+            keypoints1 = descriptor_extractor.keypoints
+            descriptors1 = descriptor_extractor.descriptors
 
-        descriptor_extractor.detect_and_extract(img2)
-        keypoints2 = descriptor_extractor.keypoints
-        descriptors2 = descriptor_extractor.descriptors
+            descriptor_extractor.detect_and_extract(img2)
+            keypoints2 = descriptor_extractor.keypoints
+            descriptors2 = descriptor_extractor.descriptors
 
-        shift0 = (P[i1, 3:5] - P[i2, 3:5]) / N
+            shift0 = (P[i1, 3:5] - P[i2, 3:5]) / N
 
-        descriptors1 = np.concatenate([keypoints1, descriptors1], axis=1)
-        descriptors2 = np.concatenate(
-            [(keypoints2 - np.array(shift0)[None, :]), descriptors2], axis=1
-        )
-
-        matches12 = match_descriptors(
-            descriptors1, descriptors2, max_ratio=0.6, cross_check=True
-        )
-
-        shifts = []
-        for i, j in matches12:
-            pi = keypoints1[i]
-            pj = keypoints2[j]
-            shift = pj - pi
-            shifts.append(shift)
-        shifts = np.array(shifts)
-
-        select = reject_outliers(shifts)
-
-        for index in np.where(select)[0]:
-            index1, index2 = matches12[index]
-            if (i1, index1) in points:
-                number = points[(i1, index1)]
-            else:
-                number = points_number
-                points_number += 1
-            points[(i1, index1)] = number
-            points[(i2, index2)] = number
-            contours.append(
-                (
-                    number,
-                    int(i1),
-                    float(keypoints1[index1, 0] * N),
-                    float(keypoints1[index1, 1] * N),
-                )
-            )
-            contours.append(
-                (
-                    number,
-                    int(i2),
-                    float(keypoints2[index2, 0] * N),
-                    float(keypoints2[index2, 1] * N),
-                )
+            descriptors1 = np.concatenate([keypoints1, descriptors1], axis=1)
+            descriptors2 = np.concatenate(
+                [(keypoints2 - np.array(shift0)[None, :]), descriptors2], axis=1
             )
 
-        shifts = shifts[select, :]
-        shift = np.mean(shifts, axis=0)
-        print(i1, np.sqrt(np.sum((shift - shift0) ** 2)))
+            matches12 = match_descriptors(
+                descriptors1, descriptors2, max_ratio=0.6, cross_check=True
+            )
 
-        # fig, ax = pylab.subplots()
-        # ax.hist(shifts[:,0])
-        # ax.hist(shifts[:,1])
-        # pylab.show()
+            shifts = []
+            for i, j in matches12:
+                pi = keypoints1[i]
+                pj = keypoints2[j]
+                shift = pj - pi
+                shifts.append(shift)
+            shifts = np.array(shifts)
 
-        # fig, ax = pylab.subplots(figsize=(11, 8))
+            select = reject_outliers(shifts)
 
-        # pylab.gray()
+            for index in np.where(select)[0]:
+                index1, index2 = matches12[index]
+                if (i1, index1) in points:
+                    number = points[(i1, index1)]
+                else:
+                    number = points_number
+                    points_number += 1
+                if (i1, index1) not in points:
+                    contours.append(
+                        (
+                            number,
+                            int(i1),
+                            float(keypoints1[index1, 0] * N),
+                            float(keypoints1[index1, 1] * N),
+                        )
+                    )
+                contours.append(
+                    (
+                        number,
+                        int(i2),
+                        float(keypoints2[index2, 0] * N),
+                        float(keypoints2[index2, 1] * N),
+                    )
+                )
+                points[(i1, index1)] = number
+                points[(i2, index2)] = number
 
-        # plot_matches(ax, img1, img2, keypoints1, keypoints2, matches12)
-        # ax.axis('off')
-        # ax.set_title("Original Image vs. Flipped Image\n" "(all keypoints and matches)")
+            shifts = shifts[select, :]
+            shift = np.mean(shifts, axis=0)
+            print(i1, np.sqrt(np.sum((shift - shift0) ** 2)))
 
-        # pylab.tight_layout()
-        # pylab.show()
+            # fig, ax = pylab.subplots()
+            # ax.hist(shifts[:,0])
+            # ax.hist(shifts[:,1])
+            # pylab.show()
+
+            # fig, ax = pylab.subplots(figsize=(11, 8))
+
+            # pylab.gray()
+
+            # plot_matches(ax, img1, img2, keypoints1, keypoints2, matches12)
+            # ax.axis('off')
+            # ax.set_title("Original Image vs. Flipped Image\n" "(all keypoints and matches)")
+
+            # pylab.tight_layout()
+            # pylab.show()
 
     contours = sorted(contours)
 
