@@ -28,7 +28,7 @@ RUN pip install \
   six \
   scipy
 
-RUN git clone https://github.com/astra-toolbox/astra-toolbox.git
+RUN git clone https://github.com/jmp1985/astra-toolbox.git
 WORKDIR /app/astra-toolbox/build/linux
 RUN bash autogen.sh   # when building a git version
 RUN bash configure --with-cuda=/usr/local/cuda --with-python --with-install-type=module --prefix=$(dirname $(which python3))
