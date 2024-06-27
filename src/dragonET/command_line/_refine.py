@@ -337,7 +337,7 @@ class Target:
         dx = P[:, 4]  # Shift X
 
         # The centre of the image
-        centre = np.array([image_size[1] / 2, 0, image_size[0] / 2])
+        centre = np.array([image_size[1] / 2, image_size[0] / 2])
 
         # Get index, z, y and x from the contours
         index = contours["index"]  # Point index
@@ -363,8 +363,8 @@ class Target:
         # the prior distribution inverse variance weights. So we add penalty
         # terms which force the parameter estimates to be close to their
         # initial values
-        P_diff = P - self.P
         for col in self.cols_with_penalty:
+            P_diff = P - self.P
             r = np.concatenate(
                 [r, self.weight[:, self.cols[col]] * P_diff[:, self.cols[col]]]
             )
@@ -499,7 +499,7 @@ class Target:
         """
 
         # Create the translation vector for each image
-        T = np.stack([dx, np.zeros(dx.size), dy], axis=1)
+        T = np.stack([dx, dy], axis=1)
 
         # Create the rotation matrix for each image
         Ra, Rb, Rc = Target.compute_rotation_matrices(a, b, c)
@@ -508,10 +508,10 @@ class Target:
         R = Ra @ Rb @ Rc
 
         # Compute the predicted positions
-        p = np.einsum("...ij,...j", R[z], X[index]) + T[z] + centre
+        p = np.einsum("...ij,...j", R[z], X[index])[:, :2] + T[z] + centre
 
         # Return y_prd and x_prd
-        y_prd = p[:, 2]  # (p . (0, 0, 1))
+        y_prd = p[:, 1]  # (p . (0, 0, 1))
         x_prd = p[:, 0]  # (p . (1, 0, 0))
         return y_prd, x_prd
 
@@ -522,9 +522,12 @@ class Target:
 
         """
         # Create the rotation matrix for each image
-        Ra = Rotation.from_rotvec(np.array((0, 1, 0))[None, :] * a[:, None]).as_matrix()
-        Rb = Rotation.from_rotvec(np.array((1, 0, 0))[None, :] * b[:, None]).as_matrix()
-        Rc = Rotation.from_rotvec(np.array((0, 0, 1))[None, :] * c[:, None]).as_matrix()
+        # Ra = Rotation.from_rotvec(np.array((0, 0, 1))[None, :] * a[:, None]).as_matrix()
+        # Rb = Rotation.from_rotvec(np.array((1, 0, 0))[None, :] * b[:, None]).as_matrix()
+        # Rc = Rotation.from_rotvec(np.array((0, 1, 0))[None, :] * c[:, None]).as_matrix()
+        Ra = Rotation.from_euler("z", a).as_matrix()
+        Rb = Rotation.from_euler("x", b).as_matrix()
+        Rc = Rotation.from_euler("y", c).as_matrix()
 
         # Return the rotation matrices
         return Ra, Rb, Rc
@@ -546,14 +549,14 @@ class Target:
         sina = np.sin(a)
 
         # Derivative wrt yaw
-        # [[-sina, 0,  cosa],
-        #  [    0, 0,     0],
-        #  [-cosa, 0, -sina]]
+        # [[-sina, -cosa, 0],
+        #  [ cosa, -sina, 0],
+        #  [    0,     0, 0]]
         dRa_da = np.zeros((a.shape[0], 3, 3))
         dRa_da[:, 0, 0] = -sina
-        dRa_da[:, 0, 2] = cosa
-        dRa_da[:, 2, 0] = -cosa
-        dRa_da[:, 2, 2] = -sina
+        dRa_da[:, 0, 1] = -cosa
+        dRa_da[:, 1, 0] = cosa
+        dRa_da[:, 1, 1] = -sina
 
         # Derivatives of full rotation matrix wrt yaw
         dR_da = dRa_da @ Rb @ Rc
@@ -562,7 +565,7 @@ class Target:
         dp_da = np.einsum("...ij,...j", dR_da[z], X)
 
         # Derivatives wrt yaw
-        dy_prd_da = dp_da[:, 2]  # dy_prd_da = dp_da . (0, 0, 1)
+        dy_prd_da = dp_da[:, 1]  # dy_prd_da = dp_da . (0, 0, 1)
         dx_prd_da = dp_da[:, 0]  # dx_prd_da = dp_da . (1, 0, 0)
 
         # Return the derivatives
@@ -601,7 +604,7 @@ class Target:
         dp_db = np.einsum("...ij,...j", dR_db[z], X)
 
         # Derivatives wrt pitch
-        dy_prd_db = dp_db[:, 2]  # dy_prd_db = dp_db . (0, 0, 1)
+        dy_prd_db = dp_db[:, 1]  # dy_prd_db = dp_db . (0, 0, 1)
         dx_prd_db = dp_db[:, 0]  # dx_prd_db = dp_db . (1, 0, 0)
 
         # Return the derivatives
@@ -624,14 +627,14 @@ class Target:
         sinc = np.sin(c)
 
         # Derivative wrt roll
-        # [[-sinc, -cosc, 0],
-        #  [ cosc, -sinc, 0],
-        #  [    0,     0, 0]]
+        # [[-sinc, 0,  cosc],
+        #  [    0, 0,     0],
+        #  [-cosc, 0, -sinc]]
         dRc_dc = np.zeros((c.shape[0], 3, 3))
         dRc_dc[:, 0, 0] = -sinc
-        dRc_dc[:, 0, 1] = -cosc
-        dRc_dc[:, 1, 0] = cosc
-        dRc_dc[:, 1, 1] = -sinc
+        dRc_dc[:, 0, 2] = cosc
+        dRc_dc[:, 2, 0] = -cosc
+        dRc_dc[:, 2, 2] = -sinc
 
         # Derivatives of full rotation matrix wrt yaw, pitch and roll
         dR_dc = Ra @ Rb @ dRc_dc
@@ -640,7 +643,7 @@ class Target:
         dp_dc = np.einsum("...ij,...j", dR_dc[z], X)
 
         # Derivatives wrt roll
-        dy_prd_dc = dp_dc[:, 2]  # dy_prd_dc = dp_dc . (0, 0, 1)
+        dy_prd_dc = dp_dc[:, 1]  # dy_prd_dc = dp_dc . (0, 0, 1)
         dx_prd_dc = dp_dc[:, 0]  # dx_prd_dc = dp_dc . (1, 0, 0)
 
         # Return the derivatives
@@ -702,9 +705,9 @@ class Target:
         dp_dX2 = R[z, :, 2]  # R[z] @ dp0_dX2 = R[z] @ (0, 0, 1)
 
         # Derivatives wrt point parameters
-        dy_prd_dX0 = dp_dX0[:, 2]  # dy_prd_dX0 = dp_dX0 . (0, 0, 1)
-        dy_prd_dX1 = dp_dX1[:, 2]  # dy_prd_dX1 = dp_dX1 . (0, 0, 1)
-        dy_prd_dX2 = dp_dX2[:, 2]  # dy_prd_dX2 = dp_dX2 . (0, 0, 1)
+        dy_prd_dX0 = dp_dX0[:, 1]  # dy_prd_dX0 = dp_dX0 . (0, 0, 1)
+        dy_prd_dX1 = dp_dX1[:, 1]  # dy_prd_dX1 = dp_dX1 . (0, 0, 1)
+        dy_prd_dX2 = dp_dX2[:, 1]  # dy_prd_dX2 = dp_dX2 . (0, 0, 1)
         dx_prd_dX0 = dp_dX0[:, 0]  # dx_prd_dX0 = dp_dX0 . (1, 0, 0)
         dx_prd_dX1 = dp_dX1[:, 0]  # dx_prd_dX1 = dp_dX1 . (1, 0, 0)
         dx_prd_dX2 = dp_dX2[:, 0]  # dx_prd_dX2 = dp_dX2 . (1, 0, 0)
@@ -802,11 +805,6 @@ def refine_model(
     # Check number of parameters
     if target.num_parameters > target.num_equations:
         print("- Warning: more parameters than equations")
-
-    # result = scipy.optimize.differential_evolution(lambda x: -np.sum(target.residuals(x)**2), list(zip(*target.bounds())))
-
-    # # Unflatten the parameters
-    # P, X = target.unflatten_parameters(result.x)
 
     # Make the target
     target = make_target(
