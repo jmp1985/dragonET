@@ -17,7 +17,6 @@ from skimage.feature import SIFT, match_descriptors  # , plot_matches
 from skimage.measure import ransac
 from skimage.transform import EuclideanTransform
 
-np.random.seed(0)
 __all__ = ["track"]
 
 
@@ -437,6 +436,9 @@ def _track(
     def write_contours(filename, data, mask, octave):
         print("Writing contours to %s" % filename)
         np.savez(open(filename, "wb"), data=data, mask=mask, octave=octave)
+
+    # Set random seed
+    np.random.seed(0)
 
     # Read the projections
     projections = read_projections(projections_in)
