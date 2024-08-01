@@ -156,7 +156,11 @@ def reconstruct(args: List[str] = None):
 
 
 def _prepare_astra_geometry(
-    P: np.ndarray, pixel_size: float = 1, axis=(0, 0, 1), axis_origin=(0, 0, 0)
+    P: np.ndarray,
+    pixel_size: float = 1,
+    image_size: tuple = (0, 0),
+    axis=(0, 0, 1),
+    axis_origin=(0, 0, 0),
 ) -> np.ndarray:
     """
     Prepare the geometry vectors
@@ -205,6 +209,7 @@ def _prepare_astra_geometry(
         return U, -axis_origin
 
     print("Preparing geometry with pixel size %f" % pixel_size)
+    assert all(np.array(image_size) > 0)
 
     # Prepare the transform to align the sample. The origin is wrt the centre
     # of the volume and the direction is a unit vector. Here we compute the
@@ -216,13 +221,13 @@ def _prepare_astra_geometry(
     a = np.radians(P[:, 0])  # Yaw
     b = np.radians(P[:, 1])  # Pitch
     c = np.radians(P[:, 2])  # Roll
-    shifty = P[:, 3]  # Shift Y
-    shiftx = P[:, 4]  # Shift X
+    shifty = P[:, 3] - image_size[0] / 2  # Shift Y
+    shiftx = P[:, 4] - image_size[1] / 2  # Shift X
 
     # Create the rotation matrix for each image
-    Ra = Rotation.from_rotvec(np.array((0, 1, 0))[None, :] * a[:, None]).as_matrix()
-    Rb = Rotation.from_rotvec(np.array((1, 0, 0))[None, :] * b[:, None]).as_matrix()
-    Rc = Rotation.from_rotvec(np.array((0, 0, 1))[None, :] * c[:, None]).as_matrix()
+    Ra = Rotation.from_euler("y", a).as_matrix()
+    Rb = Rotation.from_euler("x", b).as_matrix()
+    Rc = Rotation.from_euler("z", c).as_matrix()
 
     # Need to invert the rotation matrix for astra convention
     R = np.linalg.inv(Ra @ Rb @ Rc @ Rs.T)
@@ -392,8 +397,11 @@ def _reconstruct(
     def recon(
         projections, P, volume, pixel_size, axis, axis_origin, num_iterations, mode
     ):
+        # Get the image size
+        image_size = projections.shape[::2]
+
         # Prepare the geometry vector description
-        vectors = _prepare_astra_geometry(P, pixel_size, axis, axis_origin)
+        vectors = _prepare_astra_geometry(P, pixel_size, image_size, axis, axis_origin)
 
         # Do the reconstruction with astra
         return _reconstruct_with_astra(
