@@ -17,6 +17,7 @@ from skimage.feature import SIFT, match_descriptors  # , plot_matches
 from skimage.measure import ransac
 from skimage.transform import EuclideanTransform
 
+np.random.seed(0)
 __all__ = ["track"]
 
 
@@ -241,7 +242,7 @@ def find_matching_features(features, min_samples=5):
         transform, inliers = ransac(
             (positions_i, positions_j),
             EuclideanTransform,
-            min_samples=5,
+            min_samples=min_samples,
             residual_threshold=5,
             max_trials=1000,
         )
@@ -307,6 +308,11 @@ def construct_data_matrix(features, match_list):
     select = np.count_nonzero(mask, axis=0) >= 3
     data = data[:, select]
     mask = mask[:, select]
+
+    print(
+        "Selected %d / %d points with >= 3 observations"
+        % (np.count_nonzero(select), select.size)
+    )
 
     # Return the data matrix and mask
     return data, mask, octave
