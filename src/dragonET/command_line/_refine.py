@@ -39,25 +39,14 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
 
     # Add some command line arguments
     parser.add_argument(
-        "--points_in",
+        "--contours",
         type=str,
         default=None,
-        dest="points_in",
+        dest="contours",
         required=True,
         help=(
             """
             A YAML file containing contour information.
-            """
-        ),
-    )
-    parser.add_argument(
-        "--points_out",
-        type=str,
-        default="refined_points.yaml",
-        dest="points_out",
-        help=(
-            """
-            A YAML file describing the refined point coordinates.
             """
         ),
     )
@@ -90,7 +79,7 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         type=str,
         default="c",
         dest="fix",
-        choices=["abc", "bc", "c", "none"],
+        choices=["bc", "c", "none"],
         help="Fix parameters in refinement",
     )
     parser.add_argument(
@@ -150,8 +139,7 @@ def refine_impl(args):
     _refine(
         args.model_in,
         args.model_out,
-        args.points_in,
-        args.points_out,
+        args.contours,
         args.plots_out,
         args.info_out,
         args.fix,
@@ -171,671 +159,291 @@ def refine(args: List[str] = None):
     refine_impl(get_parser().parse_args(args=args))
 
 
-class Target:
-    """
-    Base class for refinement target
-
-    """
-
-    def __init__(
-        self,
-        P: np.ndarray,
-        X: np.ndarray,
-        image_size: tuple,
-        contours: np.ndarray,
-        cols: list = None,
-        reference_image: int = None,
-        fix_points: bool = False,
-        verbose: bool = False,
-    ):
-        """
-        Initialise the target
-
-        """
-        # Save some stuff
-        self.P = P
-        self.X = X
-        self.image_size = image_size
-        self.contours = contours
-        self.verbose = verbose
-        self.fix_points = fix_points
-
-        # Set the reference image. If the given index is None then select the
-        # index of the smallest absolute angle
-        if reference_image is None:
-            self.reference_image = np.argmin(np.abs(P[:, 2]))
-        else:
-            self.reference_image = reference_image
-
-        # Set the columns
-        if cols is None:
-            self.cols = list(range(P.shape[1]))
-        else:
-            self.cols = cols
-
-        # Set the penalty term for the regularisation
-        # FIXME - set better values
-        self.weight = np.zeros_like(P)
-        self.weight[:, 0] = 0  # Yaw
-        self.weight[:, 1] = 1e-7  # Pitch
-        self.weight[:, 2] = 1e-7  # Roll (tilt)
-        self.weight[:, 3] = 1e-7  # Dy
-        self.weight[:, 4] = 1e-7  # Dx
-
-        # Regularise on pitch, dy and dx
-        self.cols_with_penalty = []  # type: ignore
-        # type: ignore # [i for i, c in enumerate(self.cols) if c in [1, 2, 3, 4]]
-
-        # P lower bounds
-        self.P_lower = [
-            -np.radians(180),
-            -np.radians(90),
-            -np.radians(90),
-            -max(image_size),  # np.inf,
-            -max(image_size),  # np.inf,
-        ]
-
-        # P upper bounds
-        self.P_upper = [
-            np.radians(180),
-            np.radians(90),
-            np.radians(90),
-            max(image_size),  # np.inf,
-            max(image_size),  # np.inf,
-        ]
-
-        # X upper bounds
-        self.X_lower = -max(image_size)
-
-        # X lower bounds
-        self.X_upper = max(image_size)
-
-        # Set the initial parameters
-        self._parameters = self.flatten_parameters(self.P, self.X)
-
-    @property
-    def parameters(self) -> np.ndarray:
-        """
-        Get the initial parameters
-
-        """
-        return self._parameters
-
-    @property
-    def num_parameters(self) -> int:
-        """
-        Get the number of parameters
-
-        """
-        return len(self.parameters)
-
-    @property
-    def num_equations(self) -> int:
-        """
-        Get the number of equations
-
-        """
-        return len(self.contours) * 2 + self.P.shape[0] * len(self.cols_with_penalty)
-
-    def flatten_parameters(self, P: np.ndarray, X: np.ndarray) -> np.ndarray:
-        """
-        Flatten the parameters to refine
-
-        """
-        return np.concatenate(
-            [P[:, self.cols].flatten(), X.flatten() if not self.fix_points else []]
-        )
-
-    def unflatten_parameters(self, params: np.ndarray) -> tuple:
-        """
-        Unflatten the parameters to refine
-
-        """
-
-        # Construct the image parameters
-        P = self.P.copy()
-
-        # Only set columns if number of columns is > 0
-        if len(self.cols) > 0:
-            # The number of image parameters to select
-            size = self.P.shape[0] * len(self.cols)
-
-            # Get the column parameters
-            P_cols, params = params[:size], params[size:]
-            P_cols = P_cols.reshape((-1, len(self.cols)))
-
-            # Set the column values
-            P[:, self.cols] = P_cols[:, :]
-
-        # Get the point parameters
-        if not self.fix_points:
-            X = params.reshape(self.X.shape)
-        else:
-            X = self.X.copy()
-
-        # Return the image and point parameters
-        return P, X
-
-    def residuals(self, params: np.ndarray) -> np.ndarray:
-        """
-        Compute the least squares residuals
-
-        """
-
-        # Unflatten the parameters
-        P, X = self.unflatten_parameters(params)
-
-        # Stored variables
-        image_size = self.image_size
-        contours = self.contours
-
-        # The transformation
-        a = P[:, 0]  # Yaw
-        b = P[:, 1]  # Pitch
-        c = P[:, 2]  # Roll
-        dy = P[:, 3]  # Shift Y
-        dx = P[:, 4]  # Shift X
-
-        # The centre of the image
-        centre = np.array([image_size[1] / 2, image_size[0] / 2])
-
-        # Get index, z, y and x from the contours
-        index = contours["index"]  # Point index
-        z = contours["z"]  # Image number
-        y_obs = contours["y"]  # Observed y coordinate on image
-        x_obs = contours["x"]  # Observed x coordinate on image
-
-        # Do the predictions
-        y_prd, x_prd = self.predict(a, b, c, dy, dx, X, centre, index, z)
-
-        # Compute the residuals
-        r = np.zeros((contours.shape[0], 2))
-        r[:, 0] = y_prd - y_obs
-        r[:, 1] = x_prd - x_obs
-        r = r.flatten()
-
-        # Print if verbose
-        if self.verbose:
-            print(np.sqrt(np.mean(r**2)))
-
-        # Add regularisation terms. Here we assume that the initial parameter
-        # estimates are our prior distribution mean values and the weights are
-        # the prior distribution inverse variance weights. So we add penalty
-        # terms which force the parameter estimates to be close to their
-        # initial values
-        for col in self.cols_with_penalty:
-            P_diff = P - self.P
-            r = np.concatenate(
-                [r, self.weight[:, self.cols[col]] * P_diff[:, self.cols[col]]]
-            )
-
-        # Return the residuals
-        return r
-
-    def jacobian(self, params: np.ndarray) -> np.ndarray:
-        """
-        Compute the jacobian
-
-        """
-        # Unflatten the parameters
-        P, X = self.unflatten_parameters(params)
-
-        # The transformation
-        a = P[:, 0]  # Yaw
-        b = P[:, 1]  # Pitch
-        c = P[:, 2]  # Roll
-
-        # Create the rotation matrix for each image
-        Ra, Rb, Rc = self.compute_rotation_matrices(a, b, c)
-
-        # The full rotation matrix
-        R = Ra @ Rb @ Rc
-
-        # Get index, z, y and x from the contours
-        index = self.contours["index"]  # Point index
-        z = self.contours["z"]  # Image number
-
-        # Initialise the elements of the Jacobian
-        JP = np.zeros((self.contours.shape[0], 2, P.shape[0], len(self.cols)))
-
-        # The observation index
-        i = np.arange(z.size)
-
-        # Derivatives wrt image parameters
-        for j, col in enumerate(self.cols):
-            d_dP = self.d_dP(col, a, b, c, Ra, Rb, Rc, X[index], z)
-            JP[i, 0, z, j] = d_dP[0]  # dy_prd_dcol
-            JP[i, 1, z, j] = d_dP[1]  # dx_prd_dcol
-
-        # Reshape the Jacobian
-        JP = JP.reshape((self.contours.shape[0] * 2, P.shape[0] * len(self.cols)))
-
-        # Initialise elements of the Jacobian
-        if not self.fix_points:
-            JX = np.zeros((self.contours.shape[0], 2, X.shape[0], X.shape[1]))
-
-            # Derivatives wrt point parameters
-            d_dX = self.d_dX(R, z)
-            JX[i, 0, index, 0] = d_dX[0][0]  # dy_prd_dX0
-            JX[i, 0, index, 1] = d_dX[0][1]  # dy_prd_dX1
-            JX[i, 0, index, 2] = d_dX[0][2]  # dy_prd_dX2
-            JX[i, 1, index, 0] = d_dX[1][0]  # dx_prd_dX0
-            JX[i, 1, index, 1] = d_dX[1][1]  # dx_prd_dX1
-            JX[i, 1, index, 2] = d_dX[1][2]  # dx_prd_dX2
-
-            # Reshape the Jacobian
-            JX = JX.reshape((self.contours.shape[0] * 2, X.size))
-        else:
-            JX = np.zeros((self.contours.shape[0] * 2, 0))
-
-        # Construct the Jacobian
-        J = np.concatenate([JP, JX], axis=1)
-
-        # Add Jacobian elements for regularization
-        k = np.arange(P.shape[0])
-        for col in self.cols_with_penalty:
-            J_col = np.zeros(shape=(P.shape[0], J.shape[1]))
-            J_col[k, k * len(self.cols) + col] = self.weight[:, self.cols[col]]
-            J = np.concatenate([J, J_col], axis=0)
-
-        # Return Jacobian
-        return J
-
-    def bounds(self) -> tuple:
-        """
-        Define the bounds
-
-        """
-
-        # P bounds
-        P_lower = np.repeat(
-            [np.array(self.P_lower)[self.cols]], self.P.shape[0], axis=0
-        )
-        P_upper = np.repeat(
-            [np.array(self.P_upper)[self.cols]], self.P.shape[0], axis=0
-        )
-
-        # Set the bounds for the reference image The tilt angle will be fixed
-        # FIXME Better to just not refine these parameters
-        for i, c in enumerate(self.cols):
-            if c in [2]:  # [1, 2, 3, 4]:
-                P_lower[self.reference_image, i] = (
-                    self.P[self.reference_image, c] - 1e-7
-                )
-                P_upper[self.reference_image, i] = (
-                    self.P[self.reference_image, c] + 1e-7
-                )
-
-        # X lower and upper bounds
-        X_lower = np.full(self.X.shape, self.X_lower)
-        X_upper = np.full(self.X.shape, self.X_upper)
-
-        # Lower and upper bounds
-        lower = np.concatenate(
-            [P_lower.flatten(), X_lower.flatten() if not self.fix_points else []]
-        )
-        upper = np.concatenate(
-            [P_upper.flatten(), X_upper.flatten() if not self.fix_points else []]
-        )
-
-        # Return bounds
-        return lower, upper
-
-    @staticmethod
-    def predict(
-        a: np.array,
-        b: np.ndarray,
-        c: np.ndarray,
-        dy: np.ndarray,
-        dx: np.ndarray,
-        X: np.ndarray,
-        centre: np.ndarray,
-        index: np.ndarray,
-        z: np.ndarray,
-    ) -> tuple:
-        """
-        Predict the positions of the points on the images
-
-        """
-
-        # Create the translation vector for each image
-        T = np.stack([dx, dy], axis=1)
-
-        # Create the rotation matrix for each image
-        Ra, Rb, Rc = Target.compute_rotation_matrices(a, b, c)
-
-        # The full rotation matrix
-        R = Ra @ Rb @ Rc
-
-        # Compute the predicted positions
-        p = np.einsum("...ij,...j", R[z], X[index])[:, :2] + T[z] + centre
-
-        # Return y_prd and x_prd
-        y_prd = p[:, 1]  # (p . (0, 0, 1))
-        x_prd = p[:, 0]  # (p . (1, 0, 0))
-        return y_prd, x_prd
-
-    @staticmethod
-    def compute_rotation_matrices(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> tuple:
-        """
-        Compute the rotation matrices
-
-        """
-        # Create the rotation matrix for each image
-        # Ra = Rotation.from_rotvec(np.array((0, 0, 1))[None, :] * a[:, None]).as_matrix()
-        # Rb = Rotation.from_rotvec(np.array((1, 0, 0))[None, :] * b[:, None]).as_matrix()
-        # Rc = Rotation.from_rotvec(np.array((0, 1, 0))[None, :] * c[:, None]).as_matrix()
-        Ra = Rotation.from_euler("z", a).as_matrix()
-        Rb = Rotation.from_euler("x", b).as_matrix()
-        Rc = Rotation.from_euler("y", c).as_matrix()
-
-        # Return the rotation matrices
-        return Ra, Rb, Rc
-
-    @staticmethod
-    def d_da(
-        a: np.ndarray,
-        Rb: np.ndarray,
-        Rc: np.ndarray,
-        X: np.ndarray,
-        z: np.ndarray,
-    ) -> tuple:
-        """
-        Compute the derivatives wrt yaw
-
-        """
-        # Compute cos and sin of yaw
-        cosa = np.cos(a)
-        sina = np.sin(a)
-
-        # Derivative wrt yaw
-        # [[-sina, -cosa, 0],
-        #  [ cosa, -sina, 0],
-        #  [    0,     0, 0]]
-        dRa_da = np.zeros((a.shape[0], 3, 3))
-        dRa_da[:, 0, 0] = -sina
-        dRa_da[:, 0, 1] = -cosa
-        dRa_da[:, 1, 0] = cosa
-        dRa_da[:, 1, 1] = -sina
-
-        # Derivatives of full rotation matrix wrt yaw
-        dR_da = dRa_da @ Rb @ Rc
-
-        # Derivatives of p wrt to yaw
-        dp_da = np.einsum("...ij,...j", dR_da[z], X)
-
-        # Derivatives wrt yaw
-        dy_prd_da = dp_da[:, 1]  # dy_prd_da = dp_da . (0, 0, 1)
-        dx_prd_da = dp_da[:, 0]  # dx_prd_da = dp_da . (1, 0, 0)
-
-        # Return the derivatives
-        return dy_prd_da, dx_prd_da
-
-    @staticmethod
-    def d_db(
-        Ra: np.ndarray,
-        b: np.ndarray,
-        Rc: np.ndarray,
-        X: np.ndarray,
-        z: np.ndarray,
-    ) -> tuple:
-        """
-        Compute the derivatives wrt pitch
-
-        """
-        # Cos and sin of pitch
-        cosb = np.cos(b)
-        sinb = np.sin(b)
-
-        # Derivative wrt pitch
-        # [[0,     0,     0],
-        #  [0, -sinb, -cosb],
-        #  [0,  cosb, -sinb]]
-        dRb_db = np.zeros((b.shape[0], 3, 3))
-        dRb_db[:, 1, 1] = -sinb
-        dRb_db[:, 1, 2] = -cosb
-        dRb_db[:, 2, 1] = cosb
-        dRb_db[:, 2, 2] = -sinb
-
-        # Derivatives of full rotation matrix wrt pitch
-        dR_db = Ra @ dRb_db @ Rc
-
-        # Derivatives of p wrt to pitch
-        dp_db = np.einsum("...ij,...j", dR_db[z], X)
-
-        # Derivatives wrt pitch
-        dy_prd_db = dp_db[:, 1]  # dy_prd_db = dp_db . (0, 0, 1)
-        dx_prd_db = dp_db[:, 0]  # dx_prd_db = dp_db . (1, 0, 0)
-
-        # Return the derivatives
-        return dy_prd_db, dx_prd_db
-
-    @staticmethod
-    def d_dc(
-        Ra: np.ndarray,
-        Rb: np.ndarray,
-        c: np.ndarray,
-        X: np.ndarray,
-        z: np.ndarray,
-    ) -> tuple:
-        """
-        Compute the derivatives wrt roll
-
-        """
-        # Cos and sin of roll
-        cosc = np.cos(c)
-        sinc = np.sin(c)
-
-        # Derivative wrt roll
-        # [[-sinc, 0,  cosc],
-        #  [    0, 0,     0],
-        #  [-cosc, 0, -sinc]]
-        dRc_dc = np.zeros((c.shape[0], 3, 3))
-        dRc_dc[:, 0, 0] = -sinc
-        dRc_dc[:, 0, 2] = cosc
-        dRc_dc[:, 2, 0] = -cosc
-        dRc_dc[:, 2, 2] = -sinc
-
-        # Derivatives of full rotation matrix wrt yaw, pitch and roll
-        dR_dc = Ra @ Rb @ dRc_dc
-
-        # Derivatives of p wrt to rotations
-        dp_dc = np.einsum("...ij,...j", dR_dc[z], X)
-
-        # Derivatives wrt roll
-        dy_prd_dc = dp_dc[:, 1]  # dy_prd_dc = dp_dc . (0, 0, 1)
-        dx_prd_dc = dp_dc[:, 0]  # dx_prd_dc = dp_dc . (1, 0, 0)
-
-        # Return the derivatives
-        return dy_prd_dc, dx_prd_dc
-
-    @staticmethod
-    def d_dy() -> tuple:
-        """
-        Compute the derivatives wrt y shift
-
-        """
-        # dy_prd_dy = dp_dy . (0, 0, 1) = (0, 0, 1) . (0, 0, 1)
-        # dy_prd_dx = dp_dx . (0, 0, 1) = (1, 0, 0) . (0, 0, 1)
-        return 1, 0
-
-    @staticmethod
-    def d_dx() -> tuple:
-        """
-        Compute the derivatives wrt x shift
-
-        """
-        # dx_prd_dy = dp_dy . (1, 0, 0) = (0, 0, 1) . (1, 0, 0)
-        # dx_prd_dx = dp_dx . (1, 0, 0) = (1, 0, 0) . (1, 0, 0)
-        return 0, 1
-
-    @staticmethod
-    def d_dP(
-        col: int,
-        a: np.ndarray,
-        b: np.ndarray,
-        c: np.ndarray,
-        Ra: np.ndarray,
-        Rb: np.ndarray,
-        Rc: np.ndarray,
-        X: np.ndarray,
-        z: np.ndarray,
-    ) -> tuple:
-        """
-        Compute derivatices wrt image parameters
-
-        """
-        return [
-            lambda: Target.d_da(a, Rb, Rc, X, z),
-            lambda: Target.d_db(Ra, b, Rc, X, z),
-            lambda: Target.d_dc(Ra, Rb, c, X, z),
-            lambda: Target.d_dy(),
-            lambda: Target.d_dx(),
-        ][col]()
-
-    @staticmethod
-    def d_dX(R: np.ndarray, z: np.ndarray) -> np.ndarray:
-        """
-        Compute the derivatives wrt X
-
-        """
-        # Derivatives of p wrt to point parameters
-        dp_dX0 = R[z, :, 0]  # R[z] @ dp0_dX0 = R[z] @ (1, 0, 0)
-        dp_dX1 = R[z, :, 1]  # R[z] @ dp0_dX1 = R[z] @ (0, 1, 0)
-        dp_dX2 = R[z, :, 2]  # R[z] @ dp0_dX2 = R[z] @ (0, 0, 1)
-
-        # Derivatives wrt point parameters
-        dy_prd_dX0 = dp_dX0[:, 1]  # dy_prd_dX0 = dp_dX0 . (0, 0, 1)
-        dy_prd_dX1 = dp_dX1[:, 1]  # dy_prd_dX1 = dp_dX1 . (0, 0, 1)
-        dy_prd_dX2 = dp_dX2[:, 1]  # dy_prd_dX2 = dp_dX2 . (0, 0, 1)
-        dx_prd_dX0 = dp_dX0[:, 0]  # dx_prd_dX0 = dp_dX0 . (1, 0, 0)
-        dx_prd_dX1 = dp_dX1[:, 0]  # dx_prd_dX1 = dp_dX1 . (1, 0, 0)
-        dx_prd_dX2 = dp_dX2[:, 0]  # dx_prd_dX2 = dp_dX2 . (1, 0, 0)
-
-        # Return the derivatives
-        return (
-            (dy_prd_dX0, dy_prd_dX1, dy_prd_dX2),
-            (dx_prd_dX0, dx_prd_dX1, dx_prd_dX2),
-        )
-
-
-def make_target(
-    P: np.ndarray,
-    X: np.ndarray,
-    image_size: np.ndarray,
-    contours: np.ndarray,
-    fix: list = None,
-    fix_points: bool = False,
-    reference_image: int = None,
-    verbose: bool = False,
-):
-    """
-    Make the refinement target
-
-    """
-
-    # Map the strings to indices
-    column_index = {"a": 0, "b": 1, "c": 2, "y": 3, "x": 4}
-
-    # Create the column array
-    cols = np.arange(P.shape[1])
-
-    # If we are fixing some items remove them
-    if fix:
-        for item in fix:
-            cols = cols[np.where(cols != column_index[item])[0]]
-
-    # Return the target
-    return Target(
-        P, X, image_size, contours, cols, reference_image, fix_points, verbose
-    )
-
-
-def triangulate(
-    P: np.ndarray,
-    X: np.ndarray,
-    image_size: np.ndarray,
-    contours: np.ndarray,
-) -> np.ndarray:
-    """
-    Do the initial triangulation
-
-    """
-
-    # Triangulate each point independently
-    for i in set(contours["index"]):
-        # Select only observations for index i and reset index to zero
-        contours_i = contours[contours["index"] == i]
-        contours_i["index"] = 0
-
-        # Refine the model keeping everything fixed except the point coordinates
-        _, X[i], _, _ = refine_model(
-            P, X[i : i + 1], image_size, contours_i, fix=["a", "b", "c", "y", "x"]
-        )
-
-    # Return the points
-    return X
-
-
 def refine_model(
-    P: np.ndarray,
-    X: np.ndarray,
-    image_size: np.ndarray,
-    contours: np.ndarray,
-    fix: list,
-    fix_points: bool = False,
-    reference_image: int = None,
-    verbose: bool = False,
+    a,
+    b,
+    c,
+    dy,
+    dx,
+    data,
+    mask,
+    restrain=None,
+    max_iter=10,
+    teps=0.1,
 ) -> tuple:
     """
     Estimate the parameters using least squares
 
     """
-    print("Refining model with %s fixed" % str(fix))
+    print("Refining model with %s restrained" % str(restrain))
 
-    # Make the target
-    target = make_target(
-        P, X, image_size, contours, fix, fix_points, reference_image, verbose
-    )
+    def residuals(a, b, c, W, M, restrain):
+        # Get num frames and num points
+        num_frames = W.shape[0]
+        num_points = W.shape[1]
 
-    # Get the initial parameters
-    print("Num parameters: %d" % target.num_parameters)
-    print("Num equations: %d" % target.num_equations)
+        # Get the rotation matrices
+        Rabc = Rotation.from_euler("yxz", np.stack([c, b, a], axis=1)).as_matrix()
+        R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
 
-    # Check number of parameters
-    if target.num_parameters > target.num_equations:
-        print("- Warning: more parameters than equations")
+        # For each point, compute the residuals
+        r = []
+        for j in range(num_points):
+            Mj = M[:, j]
+            W0 = W[Mj, j]
+            Rj = R[Mj, :]
+            W1 = Rj @ np.linalg.inv(Rj.T @ Rj) @ Rj.T @ W0
+            r.extend((W0 - W1))
+        r = np.array(r)
 
-    # Make the target
-    target = make_target(
-        P, X, image_size, contours, fix, fix_points, reference_image, verbose
-    )
+        print(
+            "Global angle %.1f; RMSD: %.3f"
+            % (np.degrees(a[0]), np.sqrt(np.mean(r**2)))
+        )
+        return r
 
-    # Do the optimisation
-    result = scipy.optimize.least_squares(
-        target.residuals,
-        target.parameters,
-        jac=target.jacobian,
-        bounds=target.bounds(),
-    )
+    def jacobian(a, b, c, W, M, restrain):
+        def d_dp(Rabc, dRabc_dp, W, M):
+            # Get num frames and num points
+            num_frames = W.shape[0] // 2
+            num_points = W.shape[1]
 
-    # Unflatten the parameters
-    P, X = target.unflatten_parameters(result.x)
+            # Construct the rotation and derivative matrices
+            R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
+            dR_dp = np.concatenate([dRabc_dp[:, 0, :], dRabc_dp[:, 1, :]], axis=0)
+
+            # For each point add the elements of the Jacobian
+            J = []
+            for j in range(num_points):
+                # Get the mask, observations, rotation matrices and derivatives
+                Mj = M[:, j]
+                W0 = W[Mj, j]
+                Rj = R[Mj, :]
+                dRj_dp = dR_dp[Mj, :]
+
+                # Construct an array of the derivatives of Rj w.r.t a
+                num_frames_j = Rj.shape[0] // 2
+                i1 = np.arange(num_frames_j)
+                i2 = i1 + num_frames_j
+                dRj_dp_i = np.zeros((num_frames_j, dRj_dp.shape[0], dRj_dp.shape[1]))
+                dRj_dp_i[i1, i1] = dRj_dp[i1]
+                dRj_dp_i[i1, i2] = dRj_dp[i2]
+
+                # Prepare the transposes and ensure the correct array dimensions
+                # for broadcasting
+                Rj, RjT = Rj[None, :, :], Rj.T[None, :, :]
+                dRj_dp_iT = np.transpose(dRj_dp_i, (0, 2, 1))
+
+                # Compute the derivative of the residuals w.r.t a
+                RjTRj_inv = np.linalg.inv(RjT @ Rj)
+                H1 = dRj_dp_i @ RjTRj_inv @ RjT
+                H2 = Rj @ RjTRj_inv @ dRj_dp_iT
+                H3 = Rj @ RjTRj_inv @ RjT
+                dr_dp_i = -(H1 + H2 - (H2 @ H3 + H3 @ H1)) @ W0
+
+                # We need to put these subset of the results into an array with
+                # zeros for the other frames
+                dr_dp = np.zeros((dr_dp_i.shape[1], num_frames))
+                dr_dp[:, Mj[:num_frames]] = dr_dp_i.T
+
+                # Add the derivatives of the residuals w.r.t all a
+                J.extend(dr_dp)
+
+            # Return as a numpy array
+            return np.array(J)
+
+        def d_da(a, b, c, W, M):
+            # Get num frames and num points
+            num_frames = a.shape[0]
+            num_points = W.shape[1]
+
+            # Get the rotation matrices
+            Ra = Rotation.from_euler("z", a).as_matrix()
+            Rb = Rotation.from_euler("x", b).as_matrix()
+            Rc = Rotation.from_euler("y", c).as_matrix()
+            Rabc = Ra @ Rb @ Rc
+
+            # Compute the derivative of Ra w.r.t a
+            dRa_da = np.full((num_frames, 3, 3), np.eye(3))
+            dRa_da[:, 0, 0] = -np.sin(a)
+            dRa_da[:, 0, 1] = -np.cos(a)
+            dRa_da[:, 1, 0] = np.cos(a)
+            dRa_da[:, 1, 1] = -np.sin(a)
+            dRabc_da = dRa_da @ Rb @ Rc
+
+            # Compute derivatices of residuals w.r.t a
+            return d_dp(Rabc, dRabc_da, W, M)
+
+        def d_db(a, b, c, W, M):
+            # Get num frames and num points
+            num_frames = a.shape[0]
+            num_points = W.shape[1]
+
+            # Get the rotation matrices
+            Ra = Rotation.from_euler("z", a).as_matrix()
+            Rb = Rotation.from_euler("x", b).as_matrix()
+            Rc = Rotation.from_euler("y", c).as_matrix()
+            Rabc = Ra @ Rb @ Rc
+
+            # Compute the derivative of Ra w.r.t a
+            dRb_db = np.full((num_frames, 3, 3), np.eye(3))
+            dRb_db[:, 1, 1] = -np.sin(b)
+            dRb_db[:, 1, 2] = -np.cos(b)
+            dRb_db[:, 2, 1] = np.cos(b)
+            dRb_db[:, 2, 2] = -np.sin(b)
+            dRabc_db = Ra @ dRb_db @ Rc
+
+            # Compute derivatices of residuals w.r.t b
+            return d_dp(Rabc, dRabc_db, W, M)
+
+        def d_dc(a, b, c, W, M):
+            # Get num frames and num points
+            num_frames = a.shape[0]
+            num_points = W.shape[1]
+
+            # Get the rotation matrices
+            Ra = Rotation.from_euler("z", a).as_matrix()
+            Rb = Rotation.from_euler("x", b).as_matrix()
+            Rc = Rotation.from_euler("y", c).as_matrix()
+            Rabc = Ra @ Rb @ Rc
+
+            # Compute the derivative of Ra w.r.t a
+            dRc_dc = np.full((num_frames, 3, 3), np.eye(3))
+            dRc_dc[:, 0, 0] = -np.sin(c)
+            dRc_dc[:, 2, 0] = -np.cos(c)
+            dRc_dc[:, 0, 2] = np.cos(c)
+            dRc_dc[:, 2, 2] = -np.sin(c)
+            dRabc_dc = Ra @ Rb @ dRc_dc
+
+            # Compute derivatices of residuals w.r.t c
+            return d_dp(Rabc, dRabc_dc, W, M)
+
+        # Check which parameters are to be restrained
+        assert restrain in [None, "bc", "c"]
+        derivatives = {
+            None: [d_da, d_db, d_dc],  # Derivatives w.r.t a, b and c
+            "c": [d_da, d_db],  # Derivatives w.r.t b and c
+            "bc": [d_da],  # Derivatives w.r.t a
+        }
+
+        # Compute the Jacobian elements
+        return np.concatenate(
+            [d_dp(a, b, c, W, M) for d_dp in derivatives[restrain]], axis=1
+        )
+
+    def predict(a, b, c, t, W, M):
+        # Get number of points
+        num_points = W.shape[1]
+
+        # Get the rotation matrices
+        Rabc = Rotation.from_euler("yxz", np.stack([c, b, a], axis=1)).as_matrix()
+        R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
+
+        # Compute the 3D spot positions
+        S = np.zeros((3, num_points))
+        for j in range(num_points):
+            Mj = M[:, j]
+            W0 = W[Mj, j]
+            Rj = R[Mj, :]
+            S[:, j] = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ W0
+
+        # Compute the predicted positions
+        return R @ S + t[:, None]
+
+    def get_params_and_args(a, b, c, W, M, restrain=None):
+        assert restrain in [None, "bc", "c"]
+        params, args = {
+            None: ([a, b, c], [W, M, restrain]),
+            "c": ([a, b], [c, W, M, restrain]),
+            "bc": ([a], [b, c, W, M, restrain]),
+        }[restrain]
+        return np.array(params).flatten(), tuple(args)
+
+    def parse_params_and_args(x, *args):
+        restrain = args[-1]
+        assert restrain in [None, "bc", "c"]
+        if restrain is None:
+            (a, b, c), (W, M, _) = x.reshape(3, -1), args
+        elif restrain == "c":
+            (a, b), (c, W, M, _) = x.reshape(2, -1), args
+        elif restrain == "bc":
+            a, (b, c, W, M, _) = x, args
+        return a, b, c, W, M, restrain
+
+    def parse_results(x, a, b, c, restrain=None):
+        assert restrain in [None, "bc", "c"]
+        if restrain is None:
+            a, b, c = x.reshape(3, -1)
+        elif restrain == "c":
+            a, b = x.reshape(2, -1)
+        elif restrain == "bc":
+            a = x
+        return a, b, c
+
+    def fun(x, *args):
+        return residuals(*parse_params_and_args(x, *args))
+
+    def jac(x, *args):
+        return jacobian(*parse_params_and_args(x, *args))
+
+    # Construct the input
+    X = data[:, :, 0]
+    Y = data[:, :, 1]
+    t = np.concatenate([dx, dy], axis=0)
+    M = np.concatenate([mask, mask], axis=0)
+    Wc = np.concatenate([X, Y], axis=0)
+
+    # Iterate a number of times until convergence
+    for it in range(max_iter):
+        # Get the centroid subtracted observations
+        W = Wc - t[:, None]
+
+        # Get the params and arguments
+        params, args = get_params_and_args(a, b, c, W, M, restrain)
+
+        # Perform the least squares minimisation
+        result = scipy.optimize.least_squares(
+            fun,
+            params,
+            args=args,
+            jac=jac,
+            loss="linear",
+            bounds=[np.radians(-180), np.radians(180)],
+        )
+
+        # Get the results
+        a, b, c = parse_results(result.x, a, b, c, restrain)
+
+        # Predict the positions on each image and fill the missing data entries
+        W1 = predict(a, b, c, t, W, M)
+        Wc[~M] = W1[~M]
+
+        # Compute the new centroid. If the difference between the new and old
+        # translations is less than a given threshold then break
+        t, told = np.mean(Wc, axis=1), t
+        tdiff = np.sqrt(np.mean((t - told) ** 2))
+        print("Centroid shifted by %.3f pixels" % tdiff)
+
+        # Break if translation is smaller than a threshold
+        if tdiff < teps:
+            break
+
+    # Get the translations
+    dx, dy = t.reshape(2, -1)
 
     # Compute the RMSD
-    rmsd = np.sqrt(result.cost / len(contours))
+    rmsd = np.sqrt(result.cost / np.count_nonzero(mask))
 
     print("RMSD: %f" % rmsd)
 
     # Return the refined parameters and RMSD
-    return P, X, result.jac, rmsd
+    return a, b, c, dy, dx, rmsd
 
 
 def _refine(
     model_in: str,
     model_out: str,
-    points_in: str,
-    points_out: str = None,
+    contours: str,
     plots_out: str = None,
     info_out: str = None,
     fix: str = None,
@@ -847,17 +455,14 @@ def _refine(
 
     """
 
-    def read_points(filename) -> dict:
+    def read_points(filename) -> tuple:
         print("Reading points from %s" % filename)
-        return yaml.safe_load(open(filename, "r"))
+        handle = np.load(filename)
+        return handle["data"], handle["mask"], handle["octave"]
 
     def read_model(filename) -> dict:
         print("Reading model from %s" % filename)
         return yaml.safe_load(open(filename, "r"))
-
-    def write_points(points, filename):
-        print("Writing points to %s" % filename)
-        yaml.safe_dump(points, open(filename, "w"), default_flow_style=None)
 
     def write_model(model, filename):
         print("Writing model to %s" % filename)
@@ -909,58 +514,17 @@ def _refine(
         fig.suptitle("Distribution of X and Y shifts")
         fig.savefig(os.path.join(directory, "xy_shift_histogram.png"), dpi=600)
 
-    def write_points_distribution(P, directory):
-        width = 0.0393701 * 190
-        height = (6 / 8) * width
-        fig, ax = pylab.subplots(
-            ncols=3,
-            figsize=(width, height),
-            constrained_layout=True,
-            sharex=True,
-            sharey=True,
-        )
-        ax[0].hist(X[:, 0].flatten())
-        ax[1].hist(X[:, 1].flatten())
-        ax[2].hist(X[:, 2].flatten())
-        ax[0].set_xlabel("X")
-        ax[1].set_xlabel("Y")
-        ax[2].set_xlabel("Z")
-        fig.suptitle("Distribution of points")
-        fig.savefig(os.path.join(directory, "points_histogram.png"), dpi=600)
-
-    def write_covariance_matrix(Sigma, directory):
-        width = 0.0393701 * 190
-        height = (6 / 8) * width
-        fig, ax = pylab.subplots(
-            ncols=1,
-            figsize=(width, height),
-            constrained_layout=True,
-            sharex=True,
-            sharey=True,
-        )
-        ax.imshow(Sigma)
-        ax.axis("off")
-        fig.savefig(os.path.join(directory, "covariance_matrix.png"), dpi=600)
-
-    def write_plots(P, X, Sigma, directory):
+    def write_plots(P, directory):
         print("Writing plots to %s" % directory)
         if not os.path.exists(directory):
             os.makedirs(directory)
         write_angles_vs_image_number(P, directory)
         write_shift_vs_image_number(P, directory)
         write_xy_shift_distribution(P, directory)
-        write_points_distribution(X, directory)
-        write_covariance_matrix(Sigma, directory)
 
     def write_info(info, filename):
         print("Writing info to %s" % filename)
         yaml.safe_dump(info, open(filename, "w"), default_flow_style=None)
-
-    def get_contours(points):
-        return np.array(
-            [tuple(x) for x in points["contours"]],
-            dtype=[("index", "int"), ("z", "int"), ("y", "float"), ("x", "float")],
-        )
 
     def get_cycles(fix):
         # Convert to None
@@ -968,48 +532,33 @@ def _refine(
             fix = None
 
         # Check input
-        assert fix in ["abc", "bc", "c", None]
+        assert fix in ["bc", "c", None]
 
-        # Refine with just translation
-        # Then refine with translation and yaw
+        # Refine with translation and yaw
         # Then refine with translation, yaw and pitch
         # Then refine with translation, yaw, pitch and roll
-        cycles = [["a", "b", "c"]]
-        if not fix or "a" not in fix:
-            cycles.append(["b", "c"])
-        if not fix or "b" not in fix:
-            cycles.append(["c"])
-        if not fix or "c" not in fix:
-            cycles.append([])
+        return {
+            None: ["bc", "c", None],
+            "c": ["bc", "c"],
+            "bc": ["bc"],
+        }[fix]
 
-        # Return cycles
-        return cycles
-
-    def check_num_images(num_images, contours):
-        # Check that the number of images matches the number of images
-        # represented in the list of contours
-        obs_images = len(set(contours["z"]))
-        if num_images != obs_images:
+    def check_obs_per_image(mask):
+        # Check that each image has atleast 4 observations
+        obs_per_image = np.count_nonzero(mask, axis=1)
+        if np.any(obs_per_image < 4):
             raise RuntimeError(
-                "Expected %d images in contours, got %d" % (num_images, obs_images)
+                "The following images have less than 4 observations: %s"
+                % ("\n".join(map(str, np.where(obs_per_image < 4)[0])))
             )
 
-    def check_obs_per_image(contours):
-        # Check that each image has atleast 2 observations
-        obs_per_image = np.bincount(contours["z"])
-        if np.any(obs_per_image < 2):
+    def check_obs_per_point(mask):
+        # Check that each point has at least 3 observations
+        obs_per_point = np.count_nonzero(mask, axis=0)
+        if np.any(obs_per_point < 3):
             raise RuntimeError(
-                "The following images have less than 2 observations: %s"
-                % ("\n".join(map(str, np.where(obs_per_image < 2)[0])))
-            )
-
-    def check_obs_per_point(contours):
-        # Check that each point has at least 2 observations
-        obs_per_point = np.bincount(contours["index"])
-        if np.any(obs_per_point < 2):
-            raise RuntimeError(
-                "The following points have less than 2 observations: %s"
-                % ("\n".join(map(str, np.where(obs_per_point < 2)[0])))
+                "The following points have less than 3 observations: %s"
+                % ("\n".join(map(str, np.where(obs_per_point < 3)[0])))
             )
 
     def check_connections(contours):
@@ -1051,87 +600,48 @@ def _refine(
     model = read_model(model_in)
 
     # Read the points
-    points = read_points(points_in)
-
-    # Get the contours
-    contours = get_contours(points)
-    contours2 = []
-    select = np.bincount(contours["index"]) >= 3
-    count = 0
-    for index in range(len(select)):
-        if select[index]:
-            subset = contours[contours["index"] == index]
-            subset["index"] = count
-            count += 1
-            contours2.extend(subset)
-    contours = contours2
-    contours = np.array(
-        [tuple(x) for x in contours],
-        dtype=[("index", "int"), ("z", "int"), ("y", "float"), ("x", "float")],
-    )
+    data, mask, octave = read_points(contours)
 
     # Read the initial model and convert degrees to radians for use here
     P = np.array(model["transform"], dtype=float)
-    P[:, 0] = np.radians(P[:, 0])
-    P[:, 1] = np.radians(P[:, 1])
-    P[:, 2] = np.radians(P[:, 2])
+    a = np.radians(P[:, 0])
+    b = np.radians(P[:, 1])
+    c = np.radians(P[:, 2])
+    dy = P[:, 3]
+    dx = P[:, 4]
 
     # The image size
     image_size = model["image_size"]
 
     # The number of images and points
-    num_images = P.shape[0]
-    num_points = len(set(contours["index"]))
+    assert data.shape[0] == P.shape[0]
+    num_images = data.shape[0]
+    num_points = data.shape[1]
 
     # Perform some checks on the contours
-    check_num_images(num_images, contours)
-    check_obs_per_image(contours)
-    check_obs_per_point(contours)
-    check_connections(contours)
+    check_obs_per_image(mask)
+    check_obs_per_point(mask)
+    # check_connections(contours)
     print("Num images: %d" % num_images)
     print("Num contours: %d" % num_points)
-    print("Num observations: %d" % len(contours))
-
-    # If the coordinates are specified then use these as a starting point
-    if "coordinates" in points:
-        X = np.array(points["coordinates"], dtype=float)
-        assert X.shape[0] == num_points
-    else:
-        # Initialise the point parameters
-        X = np.zeros((num_points, 3))
-        X = triangulate(P, X, image_size, contours)
+    print("Num observations: %d" % np.count_nonzero(mask))
 
     # Run through the cycles of refinement
-    for fixed in get_cycles(fix):
-        P, X, J, rmsd = refine_model(
-            P, X, image_size, contours, fixed, False, reference_image, verbose
+    for restrain in get_cycles(fix):
+        a, b, c, dy, dx, rmsd = refine_model(
+            a, b, c, dy, dx, data, mask, restrain=restrain
         )
 
-    # Compute the covariance matrix of the parameters
-    Sigma = np.linalg.inv(J.T @ J) * rmsd**2
-
     # Update the model and convert back to degrees
-    P[:, 0] = np.degrees(P[:, 0])
-    P[:, 1] = np.degrees(P[:, 1])
-    P[:, 2] = np.degrees(P[:, 2])
+    P = np.stack([np.degrees(a), np.degrees(b), np.degrees(c), dy, dx], axis=1)
     model["transform"] = P.tolist()
-
-    # Compute the weights on the parameters
-    model["variance"] = np.diagonal(Sigma)[: P.size].reshape(P.shape).tolist()
-
-    # Update the points
-    points["coordinates"] = X.tolist()
 
     # Save the refined model
     write_model(model, model_out)
 
-    # Save the refined points
-    if points_out:
-        write_points(points, points_out)
-
     # Save some plots of the geometry
     if plots_out:
-        write_plots(P, X, Sigma, plots_out)
+        write_plots(P, plots_out)
 
     # Save some refinement information
     if info_out:
