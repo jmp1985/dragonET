@@ -1055,6 +1055,20 @@ def _refine(
 
     # Get the contours
     contours = get_contours(points)
+    contours2 = []
+    select = np.bincount(contours["index"]) >= 3
+    count = 0
+    for index in range(len(select)):
+        if select[index]:
+            subset = contours[contours["index"] == index]
+            subset["index"] = count
+            count += 1
+            contours2.extend(subset)
+    contours = contours2
+    contours = np.array(
+        [tuple(x) for x in contours],
+        dtype=[("index", "int"), ("z", "int"), ("y", "float"), ("x", "float")],
+    )
 
     # Read the initial model and convert degrees to radians for use here
     P = np.array(model["transform"], dtype=float)
