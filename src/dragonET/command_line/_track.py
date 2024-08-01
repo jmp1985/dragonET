@@ -15,7 +15,7 @@ import numpy as np
 import yaml
 from skimage.feature import SIFT, match_descriptors  # , plot_matches
 from skimage.measure import ransac
-from skimage.transform import EuclideanTransform  # , warp
+from skimage.transform import EuclideanTransform
 
 __all__ = ["track"]
 
