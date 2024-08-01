@@ -354,7 +354,7 @@ def construct_model(matrix, P0):
     dy = matrix[:, 1, 2]
 
     # Get the rotation component
-    a = np.arctan2(matrix[:, 1, 0], matrix[:, 0, 0])
+    a = np.degrees(np.arctan2(matrix[:, 1, 0], matrix[:, 0, 0]))
     b = P0[:, 1]
     c = P0[:, 2]
 
