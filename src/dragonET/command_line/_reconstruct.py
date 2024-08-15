@@ -225,21 +225,21 @@ def _prepare_astra_geometry(
     shiftx = P[:, 4] - image_size[1] / 2  # Shift X
 
     # Create the rotation matrix for each image
-    Ra = Rotation.from_euler("y", a).as_matrix()
+    Ra = Rotation.from_euler("z", a).as_matrix()
     Rb = Rotation.from_euler("x", b).as_matrix()
-    Rc = Rotation.from_euler("z", c).as_matrix()
+    Rc = Rotation.from_euler("y", c).as_matrix()
 
     # Need to invert the rotation matrix for astra convention
     R = np.linalg.inv(Ra @ Rb @ Rc @ Rs.T)
 
     # Create the translation vector for each image
-    t = np.stack([-shiftx, np.zeros(shiftx.size), -shifty], axis=1)
+    t = np.stack([-shiftx, -shifty, np.zeros(shiftx.size)], axis=1)
 
     # Initialise the per-image geometry vectors
     vectors = np.zeros((P.shape[0], 12))
 
     # Ray direction vector
-    vectors[:, 0:3] = R @ (0, -1, 0)
+    vectors[:, 0:3] = R @ (0, 0, -1)
 
     # Detector centre
     vectors[:, 3:6] = (np.einsum("...ij,...j", R, t) + Ts) * pixel_size
@@ -248,7 +248,7 @@ def _prepare_astra_geometry(
     vectors[:, 6:9] = R @ (pixel_size, 0, 0)
 
     # Vector from detector pixel (0,0) to (1,0)
-    vectors[:, 9:12] = R @ (0, 0, pixel_size)
+    vectors[:, 9:12] = R @ (0, pixel_size, 0)
 
     # Return the vectors
     return vectors
@@ -306,9 +306,9 @@ def _reconstruct_with_astra(
         raise RuntimeError("Not implemented")
 
     # Configure the algorithm to use.
-    if device in ["gpu"]:
+    if False:  # device in ["gpu"]:
         alg_cfg = astra.astra_dict("CGLS3D_CUDA")
-    elif device in ["host", "gpu_and_host"]:
+    elif True:  # device in ["host", "gpu_and_host"]:
         astra.plugin.register(astra.plugins.CGLSPlugin)
         alg_cfg = astra.astra_dict("CGLS-PLUGIN")
 
@@ -389,9 +389,9 @@ def _reconstruct(
 
     def volume_shape_from_projections_shape(shape):
         return (
-            shape[0] // 2,
-            shape[2] // 2,
-            shape[2] // 2,
+            shape[0],
+            shape[2],
+            shape[2],
         )
 
     def recon(
