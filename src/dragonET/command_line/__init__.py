@@ -5,4 +5,6 @@ from dragonET.command_line._reconstruct import *  # noqa
 from dragonET.command_line._refine import *  # noqa
 from dragonET.command_line._rot90 import *  # noqa
 from dragonET.command_line._select_sample_axis import *  # noqa
+from dragonET.command_line._stack_rebin import *  # noqa
+from dragonET.command_line._stack_transform import *  # noqa
 from dragonET.command_line._track import *  # noqa
