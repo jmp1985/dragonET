@@ -158,10 +158,11 @@ def _stack_transform(
         matrix[:, 1, 2] = dy
 
         # Translate from centre of the image
-        T = np.array([[1, 0, -ox], [0, 1, -oy], [0, 0, 1]])
+        T = np.array([[1, 0, ox], [0, 1, oy], [0, 0, 1]])
 
-        # Add the translation
-        matrix = matrix @ T
+        # First subtract the centre of image, then apply rotation, then
+        # translate back to centre
+        matrix = T @ matrix @ np.linalg.inv(T)
 
         # Return the matrix
         return matrix
