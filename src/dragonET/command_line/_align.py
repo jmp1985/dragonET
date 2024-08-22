@@ -96,7 +96,7 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
     parser.add_argument(
         "--max_images",
         type=int,
-        default=10,
+        default=3,
         dest="max_images",
         help="Maximum number of images to use in multiple correlation (> 0)",
     )
@@ -186,7 +186,13 @@ def align_single(X: torch.Tensor, Y: torch.Tensor) -> tuple:
     # Compute the cross correlation between the target image and the others
     c = torch.zeros(X.shape, device=device)
     for j in range(c.shape[0]):
-        c[j] = torch.fft.ifftshift(torch.fft.ifft2(X[j] * Y.conj())).real / norm
+        product = X[j] * Y.conj()
+        eps = torch.finfo(product.real.dtype).eps
+        product /= torch.maximum(
+            torch.abs(product),
+            torch.full(product.shape, 100 * eps, device=product.device),
+        )
+        c[j] = torch.fft.ifftshift(torch.fft.ifft2(product)).real  # / norm
 
     # For each translation (k,l) compute R2 = sqrt(c^T Rxx^-1 c)
     # Rxx_inv_c = torch.einsum("ij,jkl->kli", Rxx_inv, c)
@@ -221,7 +227,9 @@ def select_reference_images(
             sorted(np.arange(data.shape[0]), key=lambda x: np.abs(x - ref_index))
         )[0:max_images]
         data = data[select, :, :]
-    return data
+    else:
+        select = np.arange(data.shape[0])
+    return data, select
 
 
 def fourier_shift_image(data: torch.Tensor, shift) -> torch.Tensor:
@@ -241,7 +249,7 @@ def align_stack(
     shifts: np.ndarray,
     max_shift: float = 0.25,
     max_iter: int = 10,
-    max_images: int = 10,
+    max_images: int = 3,
     device: str = "gpu",
 ):
     """
@@ -262,7 +270,9 @@ def align_stack(
             print(" Loading image %d/%d" % (j + 1, fft_data.shape[0]))
             fft_data[j] = fourier_shift_image(
                 torch.fft.fft2(
-                    normalise(torch.from_numpy(data[j].astype("float32")).to(device))
+                    normalise(
+                        torch.from_numpy(data[j].astype("float32")).to(device),
+                    )
                 ),
                 (shifts[j, 0], shifts[j, 1]),
             ).to(fft_data.device)
@@ -278,15 +288,15 @@ def align_stack(
         # needs to be done iteratively.  3. This does not give the correlation
         # between the image and the weigted least squares estimate but rather the
         # weighted correlation between image and weighted least squares estimate
-        ysize, xsize = X.shape[-2:]
-        W = np.hanning(ysize)[:, None] * np.hanning(xsize)[None, :]
-        W = torch.sqrt(torch.from_numpy(W).to(X.device))
-        if X.dim() == 2:
-            X = torch.fft.fft2(normalise(W * torch.fft.ifft2(X)))
-        else:
-            assert X.dim() == 3
-            for j in range(X.shape[0]):
-                X[j] = torch.fft.fft2(normalise(W * torch.fft.ifft2(X[j])))
+        # ysize, xsize = X.shape[-2:]
+        # W = np.hanning(ysize)[:, None] * np.hanning(xsize)[None, :]
+        # W = torch.from_numpy(W).to(X.device)
+        # if X.dim() == 2:
+        #   X = torch.fft.fft2(normalise(W * torch.fft.ifft2(X)))
+        # else:
+        #   assert X.dim() == 3
+        #   for j in range(X.shape[0]):
+        #       X[j] = torch.fft.fft2(normalise(W * torch.fft.ifft2(X[j])))
         return X
 
     # Check input
@@ -336,14 +346,32 @@ def align_stack(
         ref_index = find_nearest(np.where(is_aligned)[0], tar_index)
         ref_index_is_aligned = np.where(np.where(is_aligned)[0] == ref_index)[0][0]
 
-        # Select the reference images and apply real space weights
-        fft_data_stack = apply_weights(
-            select_reference_images(
-                fft_data[is_aligned],
-                ref_index_is_aligned,
-                max_images,
-            ).to(device)
+        # Get the reference images
+        fft_data_stack, fft_data_select = select_reference_images(
+            fft_data[is_aligned],
+            ref_index_is_aligned,
+            max_images,
         )
+        fft_data_stack = fft_data_stack.to(device)
+
+        mask = np.ones(fft_data.shape[1:], dtype=bool)
+        for ii, index in enumerate(np.where(is_aligned)[0][fft_data_select]):
+            mask_i = scipy.ndimage.shift(
+                np.ones(fft_data.shape[1:], dtype=bool),
+                shifts[index],
+                mode="constant",
+                prefilter=False,
+            )
+            mask = mask & mask_i
+        mask = torch.from_numpy(mask).to(device)
+
+        for index in range(fft_data_stack.shape[0]):
+            fft_data_stack[index] = torch.fft.fft2(
+                torch.fft.ifft2(fft_data_stack[index]) * mask
+            )
+
+        # Select the reference images and apply real space weights
+        fft_data_stack = apply_weights(fft_data_stack)
 
         # Do the iterations for each image
         for it in range(max_iter):
@@ -400,7 +428,7 @@ def _align(
     reference_image: int = None,
     max_shift: float = 0.25,
     max_iter: int = 10,
-    max_images: int = 10,
+    max_images: int = 3,
     device: str = "gpu",
 ):
     """
@@ -434,10 +462,10 @@ def _align(
         print("- Warning pitch is not zero in initial model but will be ignored.")
 
     # Align the stack
-    P[:, 3:5] = align_stack(
+    P[:, 3:5] = -align_stack(
         projections,
         P[:, 2],
-        P[:, 3:5],
+        -P[:, 3:5],
         max_shift,
         max_iter,
         max_images,
