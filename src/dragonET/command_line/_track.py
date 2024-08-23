@@ -13,6 +13,9 @@ from typing import List
 import mrcfile
 import numpy as np
 import yaml
+
+# from matplotlib import pylab
+from scipy.spatial.transform import Rotation
 from skimage.feature import SIFT, match_descriptors  # , plot_matches
 from skimage.measure import ransac
 from skimage.transform import EuclideanTransform
@@ -154,7 +157,11 @@ def extract_features(projections, rebin_factor):
 
     # Initialise the SIFT algorithm
     descriptor_extractor = SIFT(
-        upsampling=1, c_dog=0.009, n_scales=8, n_hist=16, n_ori=16
+        upsampling=1,
+        # c_dog=0.001,
+        # n_scales=8,
+        # n_hist=16,
+        # n_ori=16
     )
 
     # Initialise the feature lookup
@@ -186,7 +193,7 @@ def extract_features(projections, rebin_factor):
     return features
 
 
-def find_matching_features(features, min_samples=5):
+def find_matching_features(projections, features, min_samples=4):
     # Initialise the transformation matrix for each image
     matrix = np.full((len(features), 3, 3), np.eye(3))
 
@@ -195,65 +202,125 @@ def find_matching_features(features, min_samples=5):
 
     # Match features across adjacent images
     for i, j in enumerate(range(1, len(features))):
-        # Match the features
-        matches = match_descriptors(
-            features[i]["descriptors"],
-            features[j]["descriptors"],
-            max_ratio=0.95,
-            cross_check=True,
+        # The octaves
+        octaves = set.intersection(
+            set(features[i]["octaves"]), set(features[j]["octaves"])
         )
 
-        # Get the octaves
-        octaves_i, octaves_j = (
-            features[i]["octaves"][matches[:, 0]],
-            features[j]["octaves"][matches[:, 1]],
-        )
+        all_matches = []
+        for octave in octaves:
+            # Select only those features with the current octave
+            selection_i = features[i]["octaves"] == octave
+            selection_j = features[j]["octaves"] == octave
 
-        # Select only those points which have matching octaves
-        matches = matches[octaves_i == octaves_j, :]
+            # Match the features
+            matches = match_descriptors(
+                features[i]["descriptors"][selection_i],
+                features[j]["descriptors"][selection_j],
+                max_ratio=0.95,
+                cross_check=True,
+            )
+            # print(len(matches))
 
-        # Get the orientations
-        orientations_i, orientations_j = (
-            features[i]["orientations"][matches[:, 0]],
-            features[j]["orientations"][matches[:, 1]],
-        )
+            # Get the octaves
+            # octaves_i, octaves_j = (
+            #     features[i]["octaves"][matches[:, 0]],
+            #     features[j]["octaves"][matches[:, 1]],
+            # )
 
-        # Compute the angular difference and select those with an angular
-        # difference less than the number of divisions used to find the
-        # orientation
-        zn = np.exp(1j * (orientations_i - orientations_j))
-        angle_diff = np.abs(np.angle(zn) - np.angle(np.median(zn)))
-        select_orientation = angle_diff < (2 * np.pi / 16)
+            # Select only those points which have matching octaves
+            # matches = matches[octaves_i == octaves_j, :]
+            # print(len(matches))
 
-        # Select only those with matching orientations
-        matches = matches[select_orientation, :]
+            # Get the orientations
+            orientations_i, orientations_j = (
+                features[i]["orientations"][selection_i][matches[:, 0]],
+                features[j]["orientations"][selection_j][matches[:, 1]],
+            )
+
+            # Compute the angular difference and select those with an angular
+            # difference less than the number of divisions used to find the
+            # orientation
+            zn = np.exp(1j * (orientations_i - orientations_j))
+            angle_diff = np.abs(np.angle(zn) - np.angle(np.median(zn)))
+            select_orientation = angle_diff < (2 * np.pi / 16)
+
+            # Select only those with matching orientations
+            matches = matches[select_orientation, :]
+            # print(len(matches))
+
+            matches[:, 0] = np.arange(len(selection_i))[selection_i][matches[:, 0]]
+            matches[:, 1] = np.arange(len(selection_j))[selection_j][matches[:, 1]]
+
+            all_matches.append(matches)
+        matches = np.concatenate(all_matches, axis=0)
+        # print(len(matches))
+
+        # fig, ax = pylab.subplots()
+        # plot_matches(
+        #     ax,
+        #     projections[i],
+        #     projections[j],
+        #     features[i]["keypoints"][:, ::-1],
+        #     features[j]["keypoints"][:, ::-1],
+        #     matches,
+        # )
+        # pylab.show()
 
         # Get the positions
         positions_i, positions_j = (
             features[i]["keypoints"][matches[:, 0]],
             features[j]["keypoints"][matches[:, 1]],
         )
+        # if j > 89:
+        #     fig, ax = pylab.subplots()
+        #     plot_matches(
+        #         ax,
+        #         projections[i],
+        #         projections[j],
+        #         features[i]["keypoints"][:, ::-1],
+        #         features[j]["keypoints"][:, ::-1],
+        #         matches,
+        #     )
+        #     pylab.show()
 
         # Only bother if we have enough samples
-        assert len(positions_i) >= min_samples
+        # print(len(positions_i))
+        try:
+            assert len(positions_i) >= min_samples
 
-        # Compute the Euclidean transform
-        transform, inliers = ransac(
-            (positions_i, positions_j),
-            EuclideanTransform,
-            min_samples=min_samples,
-            residual_threshold=5,
-            max_trials=1000,
-        )
+            # Compute the Euclidean transform
+            transform, inliers = ransac(
+                (positions_i, positions_j),
+                EuclideanTransform,
+                min_samples=min_samples,
+                residual_threshold=10,
+                max_trials=1000,
+            )
 
-        # Add the list of matches to a dictionary.
-        for index in np.where(inliers)[0]:
-            key_i = (i, matches[index, 0])
-            key_j = (j, matches[index, 1])
-            match_list[key_i] = key_j
+            # fig, ax = pylab.subplots()
+            # plot_matches(
+            #     ax,
+            #     projections[i],
+            #     projections[j],
+            #     features[i]["keypoints"][:, ::-1],
+            #     features[j]["keypoints"][:, ::-1],
+            #     matches[inliers,:],
+            # )
+            # pylab.show()
+            # Check the number of inliers
+            assert np.count_nonzero(inliers) >= min_samples
 
-        # Update the matrix
-        matrix[j] = transform.params @ matrix[j - 1]
+            # Add the list of matches to a dictionary.
+            for index in np.where(inliers)[0]:
+                key_i = (i, matches[index, 0])
+                key_j = (j, matches[index, 1])
+                match_list[key_i] = key_j
+
+            # Update the matrix
+            matrix[j] = transform.params @ matrix[j - 1]
+        except Exception:
+            pass
 
         print(
             "Matching images (%d, %d): fitted %d points out of %d matches from (%d, %d) features"
@@ -304,14 +371,14 @@ def construct_data_matrix(features, match_list):
 
     # Select only those points which have 3 or more observations which is a
     # requirement to ensure that the point can be triangulated in 3D.
-    select = np.count_nonzero(mask, axis=0) >= 3
-    data = data[:, select]
-    mask = mask[:, select]
+    # select = np.count_nonzero(mask, axis=0) >= 3
+    # data = data[:, select]
+    # mask = mask[:, select]
 
-    print(
-        "Selected %d / %d points with >= 3 observations"
-        % (np.count_nonzero(select), select.size)
-    )
+    # print(
+    #     "Selected %d / %d points with >= 3 observations"
+    #     % (np.count_nonzero(select), select.size)
+    # )
 
     # Return the data matrix and mask
     return data, mask, octave
@@ -349,6 +416,15 @@ def recentre_points(data, mask, matrix, origin=(0, 0)):
 
 
 def construct_model(matrix, P0):
+    # Get the initial angle
+    a = np.radians(P0[0, 0])
+
+    # Create the rotation matrix
+    R = Rotation.from_euler("z", a).as_matrix()
+
+    # Rotate the matrices
+    matrix = matrix @ R
+
     # Get the translations
     dx = matrix[:, 0, 2]
     dy = matrix[:, 1, 2]
@@ -366,7 +442,7 @@ def track_stack(
     projections,
     P,
     rebin_factor=8,
-    min_samples=5,
+    min_samples=4,
 ):
     """
     Do the alignment
@@ -391,7 +467,9 @@ def track_stack(
     features = extract_features(rebinned_projections, rebin_factor)
 
     # Find matching features and compute initial transform between images
-    matrix, match_list = find_matching_features(features, min_samples)
+    matrix, match_list = find_matching_features(
+        rebinned_projections, features, min_samples
+    )
 
     # Construct data matrix. This is a FxPx2 matrix containing the coordinates
     # of all points on all frames. The mask is a FxP matrix showing whether the
@@ -401,7 +479,8 @@ def track_stack(
 
     # Recentre the points around the origin. This calculates the optimal matrix
     # that puts the points around the origin on each image.
-    matrix = recentre_points(data, mask, matrix, origin=(0, 0))
+    origin = np.array(rebinned_projections.shape[1:]) / 2
+    matrix = recentre_points(data, mask, matrix, origin=origin)
 
     # Construct the model parameters
     P = construct_model(matrix, P)
