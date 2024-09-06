@@ -190,19 +190,50 @@ def refine_model(
         # Get the rotation matrices
         Rabc = Rotation.from_euler("yxz", np.stack([c, b, a], axis=1)).as_matrix()
         R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
+        # def f(t):
 
-        def f(t):
-            WW = W - t[:, None]
-            S = np.zeros((3, num_points))
-            for j in range(num_points):
-                Mj = M[:, j]
-                W0 = WW[Mj, j]
-                Rj = R[Mj, :]
-                S[:, j] = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ W0
-            # print(np.mean(S))
-            return S.flatten()
+        #     WW = W - t[:,None]
+        #     S = np.zeros((3, num_points))
+        #     r = []
+        #     for j in range(num_points):
+        #         Mj = M[:, j]
+        #         W0 = WW[Mj, j]
+        #         Rj = R[Mj, :]
+        #         S[:,j] = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ W0
+        #         W1 = Rj @ S[:,j]
+        #         r.extend((W0 - W1))
+        #     r = np.array(r)
+        #     # print(np.mean(S))
+        #     return np.concatenate([S.flatten(), r])
 
-        t = scipy.optimize.least_squares(f, tcurr).x
+        # t = scipy.optimize.least_squares(f, tcurr).x
+
+        Y = []
+        J = []
+        for j in range(num_points):
+            Mj = M[:, j]
+            W0 = W[Mj, j]
+            Rj = R[Mj, :]
+            Qj = np.linalg.inv(Rj.T @ Rj) @ Rj.T
+            Sj = Qj @ W0
+            W1 = Rj @ Sj
+            rj = W1 - W0
+
+            Nj = np.count_nonzero(Mj)
+            JSj = np.zeros((3, num_frames))
+            Jrj = np.zeros((Nj, num_frames))
+            JSj[:, Mj] = Qj
+            Jrj[:, Mj] = (Rj @ Qj) - np.identity(Nj)
+
+            Y.extend(Sj.flatten())
+            Y.extend(rj)
+            J.extend(JSj)
+            J.extend(Jrj)
+
+        Y = np.array(Y)
+        J = np.array(J)
+
+        t = np.linalg.pinv(J.T @ J) @ J.T @ Y
 
         # Compute the translations that centre the points
         # Y = np.zeros((3, num_points))
@@ -217,10 +248,10 @@ def refine_model(
         # Y = Y.flatten()
         # J = J.reshape(3*num_points, num_frames)
         # t1 = np.linalg.pinv(J.T @ J) @ J.T @ Y
-        # t1 =np.mean(W, axis=1)
+        t1 = np.mean(W, axis=1)
         # pylab.plot(t - t1)
         # pylab.show()
-        # print("Diff: ", np.max(np.abs(t - t1)))
+        print("Diff: ", np.max(np.abs(t - t1)))
 
         # print(t[0])
         tcurr[:] = t
