@@ -177,7 +177,12 @@ def refine_model(
     """
     print("Refining model with %s restrained" % str(restrain))
 
+    tcurr = np.zeros(data.shape[0] * 2)
+
     def residuals(a, b, c, W, M, restrain):
+        import time
+
+        st = time.time()
         # Get num frames and num points
         num_frames = W.shape[0]
         num_points = W.shape[1]
@@ -185,6 +190,55 @@ def refine_model(
         # Get the rotation matrices
         Rabc = Rotation.from_euler("yxz", np.stack([c, b, a], axis=1)).as_matrix()
         R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
+
+        def f(t):
+            WW = W - t[:, None]
+            S = np.zeros((3, num_points))
+            for j in range(num_points):
+                Mj = M[:, j]
+                W0 = WW[Mj, j]
+                Rj = R[Mj, :]
+                S[:, j] = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ W0
+            # print(np.mean(S))
+            return S.flatten()
+
+        t = scipy.optimize.least_squares(f, tcurr).x
+
+        # Compute the translations that centre the points
+        # Y = np.zeros((3, num_points))
+        # J = np.zeros((3, num_points, num_frames))
+        # for j in range(num_points):
+        #     Mj = M[:, j]
+        #     W0 = W[Mj, j]
+        #     Rj = R[Mj, :]
+        #     Qj = np.linalg.inv(Rj.T @ Rj) @ Rj.T
+        #     Y[:,j] = -Qj @ W0
+        #     J[:,j,Mj] = -Qj
+        # Y = Y.flatten()
+        # J = J.reshape(3*num_points, num_frames)
+        # t1 = np.linalg.pinv(J.T @ J) @ J.T @ Y
+        # t1 =np.mean(W, axis=1)
+        # pylab.plot(t - t1)
+        # pylab.show()
+        # print("Diff: ", np.max(np.abs(t - t1)))
+
+        # print(t[0])
+        tcurr[:] = t
+
+        # S = np.zeros((3, num_points))
+        # for j in range(num_points):
+        #     Mj = M[:, j]
+        #     W0 = (W - t[:,None])[Mj, j]
+        #     Rj = R[Mj, :]
+        #     Qj = np.linalg.inv(Rj.T @ Rj) @ Rj.T
+        #     S[:,j] = -Qj @ W0
+
+        # W1 = R @ S
+        # print(np.mean(S))
+        # WW = R @ S
+        W = W - t[:, None]
+        # print(np.mean(W))
+        # print(np.mean(W1))
 
         # For each point, compute the residuals
         r = []
@@ -197,9 +251,11 @@ def refine_model(
         r = np.array(r)
 
         print(
-            "Global angle %.1f; RMSD: %.3f"
-            % (np.degrees(a[0]), np.sqrt(np.mean(r**2)))
+            "Global angle %.1f; Shift: %s; RMSD: %.3f"
+            % (np.degrees(b[0]), t[0], np.sqrt(np.mean(r**2)))
         )
+        # print("Fun: %f" % (time.time() - st))
+
         return r
 
     def jacobian(a, b, c, W, M, restrain):
@@ -215,6 +271,8 @@ def refine_model(
             # For each point add the elements of the Jacobian
             J = []
             for j in range(num_points):
+                import time
+
                 # Get the mask, observations, rotation matrices and derivatives
                 Mj = M[:, j]
                 W0 = W[Mj, j]
@@ -238,8 +296,9 @@ def refine_model(
                 RjTRj_inv = np.linalg.inv(RjT @ Rj)
                 H1 = dRj_dp_i @ RjTRj_inv @ RjT
                 H2 = Rj @ RjTRj_inv @ dRj_dp_iT
-                H3 = Rj @ RjTRj_inv @ RjT
-                dr_dp_i = -(H1 + H2 - (H2 @ H3 + H3 @ H1)) @ W0
+                # H3 = Rj @ RjTRj_inv @ RjT
+                # dr_dp_i = -(H1 + H2 - (H2 @ H3 + H3 @ H1)) @ W0
+                dr_dp_i = -(H1 + H2) @ W0
 
                 # We need to put these subset of the results into an array with
                 # zeros for the other frames
@@ -318,6 +377,9 @@ def refine_model(
             # Compute derivatices of residuals w.r.t c
             return d_dp(Rabc, dRabc_dc, W, M)
 
+        import time
+
+        st = time.time()
         # Check which parameters are to be restrained
         assert restrain in [None, "bc", "c"]
         derivatives = {
@@ -326,10 +388,16 @@ def refine_model(
             "bc": [d_da],  # Derivatives w.r.t a
         }
 
+        t = tcurr
+
+        W = W - t[:, None]
+
         # Compute the Jacobian elements
-        return np.concatenate(
+        r = np.concatenate(
             [d_dp(a, b, c, W, M) for d_dp in derivatives[restrain]], axis=1
         )
+        # print("Jac: %.2f" % (time.time() - st))
+        return r
 
     def predict(a, b, c, t, W, M):
         # Get number of points
@@ -394,19 +462,20 @@ def refine_model(
     Wc = np.concatenate([X, Y], axis=0)
 
     # Iterate a number of times until convergence
-    for it in range(max_iter):
+    for it in range(1):  # max_iter):
         # Get the centroid subtracted observations
-        W = Wc - t[:, None]
+        # W = Wc - t[:, None]
+        tcurr[:] = t[:]
 
         # Get the params and arguments
-        params, args = get_params_and_args(a, b, c, W, M, restrain)
+        params, args = get_params_and_args(a, b, c, Wc, M, restrain)
 
         # Perform the least squares minimisation
         result = scipy.optimize.least_squares(
             fun,
             params,
             args=args,
-            jac=jac,
+            # jac=jac,
             loss="linear",
             bounds=[np.radians(-180), np.radians(180)],
         )
@@ -414,19 +483,22 @@ def refine_model(
         # Get the results
         a, b, c = parse_results(result.x, a, b, c, restrain)
 
+        t = tcurr
+        # t = np.concatenate([dx, dy], axis=0)
+
         # Predict the positions on each image and fill the missing data entries
-        W1 = predict(a, b, c, t, W, M)
-        Wc[~M] = W1[~M]
+        # W1 = predict(a, b, c, t, W, M)
+        # Wc[~M] = W1[~M]
 
         # Compute the new centroid. If the difference between the new and old
         # translations is less than a given threshold then break
-        t, told = np.mean(Wc, axis=1), t
-        tdiff = np.sqrt(np.mean((t - told) ** 2))
-        print("Centroid shifted by %.3f pixels" % tdiff)
+        # t, told = np.mean(Wc, axis=1), t
+        # tdiff = np.sqrt(np.mean((t - told) ** 2))
+        # print("Centroid shifted by %.3f pixels" % tdiff)
 
         # Break if translation is smaller than a threshold
-        if tdiff < teps:
-            break
+        # if tdiff < teps:
+        #    break
 
     # Get the translations
     dx, dy = t.reshape(2, -1)
@@ -458,7 +530,7 @@ def _refine(
     def read_points(filename) -> tuple:
         print("Reading points from %s" % filename)
         handle = np.load(filename)
-        return handle["data"], handle["mask"], handle["octave"]
+        return handle["data"], handle["mask"]
 
     def read_model(filename) -> dict:
         print("Reading model from %s" % filename)
@@ -545,8 +617,12 @@ def _refine(
 
     def check_obs_per_image(mask):
         # Check that each image has atleast 4 observations
+        from matplotlib import pylab
+
+        pylab.imshow(mask)
+        pylab.show()
         obs_per_image = np.count_nonzero(mask, axis=1)
-        if np.any(obs_per_image < 4):
+        if np.any(obs_per_image < 3):
             raise RuntimeError(
                 "The following images have less than 4 observations: %s"
                 % ("\n".join(map(str, np.where(obs_per_image < 4)[0])))
@@ -600,10 +676,13 @@ def _refine(
     model = read_model(model_in)
 
     # Read the points
-    data, mask, octave = read_points(contours)
+    data, mask = read_points(contours)
 
     # Read the initial model and convert degrees to radians for use here
     P = np.array(model["transform"], dtype=float)
+    # j0 = 0
+    # j1 = j0 + 3
+    # P = P[j0:j1,:]
     a = np.radians(P[:, 0])
     b = np.radians(P[:, 1])
     c = np.radians(P[:, 2])
@@ -614,23 +693,39 @@ def _refine(
     image_size = model["image_size"]
 
     # The number of images and points
-    assert data.shape[0] == P.shape[0]
+    # assert data.shape[0] == P.shape[0]
     num_images = data.shape[0]
     num_points = data.shape[1]
 
     # Perform some checks on the contours
     check_obs_per_image(mask)
-    check_obs_per_point(mask)
+    # check_obs_per_point(mask)
     # check_connections(contours)
     print("Num images: %d" % num_images)
     print("Num contours: %d" % num_points)
     print("Num observations: %d" % np.count_nonzero(mask))
+
+    select = np.count_nonzero(mask, axis=0) >= 3
+    data = data[:, select]
+    mask = mask[:, select]
+    # select = mask[j0,:]
+    # for j in range(j0 + 1, j1):
+    #     select = select & mask[j,:]
+    # data = data[j0:j1,select]
+    # mask = mask[j0:j1,select]
+    # print(mask.shape)
+
+    dy += 256
+    dx += 256
 
     # Run through the cycles of refinement
     for restrain in get_cycles(fix):
         a, b, c, dy, dx, rmsd = refine_model(
             a, b, c, dy, dx, data, mask, restrain=restrain
         )
+
+    dy -= 256
+    dx -= 256
 
     # Update the model and convert back to degrees
     P = np.stack([np.degrees(a), np.degrees(b), np.degrees(c), dy, dx], axis=1)

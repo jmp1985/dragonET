@@ -13,10 +13,9 @@ from typing import List
 import mrcfile
 import numpy as np
 import yaml
-
-# from matplotlib import pylab
+from matplotlib import pylab
 from scipy.spatial.transform import Rotation
-from skimage.feature import SIFT, match_descriptors  # , plot_matches
+from skimage.feature import SIFT, match_descriptors, plot_matches
 from skimage.measure import ransac
 from skimage.transform import EuclideanTransform
 
@@ -158,10 +157,15 @@ def extract_features(projections, rebin_factor):
     # Initialise the SIFT algorithm
     descriptor_extractor = SIFT(
         upsampling=1,
+        # c_dog=0.0000000001,
+        # c_edge=100000000000,
+        # n_scales=1,
+        # n_octaves=1,
         # c_dog=0.001,
-        # n_scales=8,
-        # n_hist=16,
-        # n_ori=16
+        n_scales=32,
+        n_octaves=32,
+        n_hist=16,
+        n_ori=16,
     )
 
     # Initialise the feature lookup
@@ -202,59 +206,38 @@ def find_matching_features(projections, features, min_samples=4):
 
     # Match features across adjacent images
     for i, j in enumerate(range(1, len(features))):
-        # The octaves
-        octaves = set.intersection(
-            set(features[i]["octaves"]), set(features[j]["octaves"])
+        # Match the features
+        matches = match_descriptors(
+            features[i]["descriptors"],
+            features[j]["descriptors"],
+            max_ratio=0.95,
+            cross_check=True,
         )
 
-        all_matches = []
-        for octave in octaves:
-            # Select only those features with the current octave
-            selection_i = features[i]["octaves"] == octave
-            selection_j = features[j]["octaves"] == octave
+        # Get the octaves
+        octaves_i, octaves_j = (
+            features[i]["octaves"][matches[:, 0]],
+            features[j]["octaves"][matches[:, 1]],
+        )
 
-            # Match the features
-            matches = match_descriptors(
-                features[i]["descriptors"][selection_i],
-                features[j]["descriptors"][selection_j],
-                max_ratio=0.95,
-                cross_check=True,
-            )
-            # print(len(matches))
+        # Select only those points which have matching octaves
+        matches = matches[octaves_i == octaves_j, :]
 
-            # Get the octaves
-            # octaves_i, octaves_j = (
-            #     features[i]["octaves"][matches[:, 0]],
-            #     features[j]["octaves"][matches[:, 1]],
-            # )
+        # Get the orientations
+        orientations_i, orientations_j = (
+            features[i]["orientations"][matches[:, 0]],
+            features[j]["orientations"][matches[:, 1]],
+        )
 
-            # Select only those points which have matching octaves
-            # matches = matches[octaves_i == octaves_j, :]
-            # print(len(matches))
+        # Compute the angular difference and select those with an angular
+        # difference less than the number of divisions used to find the
+        # orientation
+        zn = np.exp(1j * (orientations_i - orientations_j))
+        angle_diff = np.abs(np.angle(zn) - np.angle(np.median(zn)))
+        select_orientation = angle_diff < (2 * np.pi / 16)
 
-            # Get the orientations
-            orientations_i, orientations_j = (
-                features[i]["orientations"][selection_i][matches[:, 0]],
-                features[j]["orientations"][selection_j][matches[:, 1]],
-            )
-
-            # Compute the angular difference and select those with an angular
-            # difference less than the number of divisions used to find the
-            # orientation
-            zn = np.exp(1j * (orientations_i - orientations_j))
-            angle_diff = np.abs(np.angle(zn) - np.angle(np.median(zn)))
-            select_orientation = angle_diff < (2 * np.pi / 16)
-
-            # Select only those with matching orientations
-            matches = matches[select_orientation, :]
-            # print(len(matches))
-
-            matches[:, 0] = np.arange(len(selection_i))[selection_i][matches[:, 0]]
-            matches[:, 1] = np.arange(len(selection_j))[selection_j][matches[:, 1]]
-
-            all_matches.append(matches)
-        matches = np.concatenate(all_matches, axis=0)
-        # print(len(matches))
+        # Select only those with matching orientations
+        matches = matches[select_orientation, :]
 
         # fig, ax = pylab.subplots()
         # plot_matches(
@@ -294,7 +277,7 @@ def find_matching_features(projections, features, min_samples=4):
                 (positions_i, positions_j),
                 EuclideanTransform,
                 min_samples=min_samples,
-                residual_threshold=10,
+                residual_threshold=5,
                 max_trials=1000,
             )
 
@@ -320,7 +303,7 @@ def find_matching_features(projections, features, min_samples=4):
             # Update the matrix
             matrix[j] = transform.params @ matrix[j - 1]
         except Exception:
-            pass
+            inliers = np.zeros(positions_i.shape[0], dtype=bool)
 
         print(
             "Matching images (%d, %d): fitted %d points out of %d matches from (%d, %d) features"

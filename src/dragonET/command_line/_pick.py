@@ -189,7 +189,7 @@ def _pick(
                     ]
                 )
 
-                transform[i] = O @ R @ np.linalg.inv(O) @ T
+                transform[i] = O @ R @ np.linalg.inv(O) @ np.linalg.inv(T)
 
         # Return the transform
         return transform
@@ -205,15 +205,22 @@ def _pick(
     def set_contours(viewer, transform, contours):
         # If there are contours then add them as layers
         if contours:
-            contours = sorted(contours, key=lambda x: x[0])
-            for index, group in itertools.groupby(contours, lambda x: x[0]):
-                points = [x[1:] for x in group]
-                points = [
-                    (transform[int(p[0])] @ np.array(p + [1]))[0:3] for p in points
-                ]
-                points = [(int(p[0]), p[1], p[2]) for p in points]
-                name = "Points [%d]" % index if index > 0 else "Points"
-                viewer.add_points(points, name=name, face_color="blue", size=50)
+            points = np.array(contours)[:, 1:4]
+            points = [
+                (transform[int(p[0])] @ np.array(p + [1]))[0:3] for p in points.tolist()
+            ]
+            points = [(int(p[0]), p[1], p[2]) for p in points]
+            viewer.add_points(points, name="All points", face_color="blue", size=50)
+            # contours = sorted(contours, key=lambda x: x[0])
+            # for index, group in itertools.groupby(contours, lambda x: x[0]):
+            #     print("Adding contour for point %d" % index)
+            #     points = [x[1:] for x in group]
+            #     points = [
+            #         (transform[int(p[0])] @ np.array(p + [1]))[0:3] for p in points
+            #     ]
+            #     points = [(int(p[0]), p[1], p[2]) for p in points]
+            #     name = "Points [%d]" % index if index > 0 else "Points"
+            #     viewer.add_points(points, name=name, face_color="blue", size=50)
 
     def get_contours(viewer, transform):
         # Loop through the point sets and get the lists of contours
