@@ -349,7 +349,7 @@ def _project(
     # Do the projection
     projections = project_internal(volume, P, pixel_size, axis, axis_origin, device)
 
-    # Create a new file with the projected volume
+    # Create a new file with the projected images
     write_projections(projections_filename, projections)
 
 
