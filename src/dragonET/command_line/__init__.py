@@ -1,6 +1,7 @@
 from dragonET.command_line._align import *  # noqa
 from dragonET.command_line._new import *  # noqa
 from dragonET.command_line._pick import *  # noqa
+from dragonET.command_line._project import *  # noqa
 from dragonET.command_line._reconstruct import *  # noqa
 from dragonET.command_line._refine import *  # noqa
 from dragonET.command_line._rot90 import *  # noqa
