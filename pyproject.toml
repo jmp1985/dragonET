@@ -90,6 +90,7 @@ test = [
 "dragonET.rot90" = "dragonET.command_line:rot90"
 "dragonET.select_sample_axis" = "dragonET.command_line:select_sample_axis"
 "dragonET.track" = "dragonET.command_line:track"
+"dragonET.stack.edit" = "dragonET.command_line:stack_edit"
 "dragonET.stack.rebin" = "dragonET.command_line:stack_rebin"
 "dragonET.stack.transform" = "dragonET.command_line:stack_transform"
 
