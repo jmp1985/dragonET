@@ -190,66 +190,9 @@ def refine_model(
         # Get the rotation matrices
         Rabc = Rotation.from_euler("yxz", np.stack([c, b, a], axis=1)).as_matrix()
         R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
-        # M = np.ones_like(M)
-
-        def f(t):
-            W0 = W - t[:, None]
-            S = np.zeros((3, num_points))
-            for j in range(num_points):
-                Mj = M[:, j]
-                tj = t[Mj]
-                Wj = W0[Mj, j]
-                Rj = R[Mj, :]
-                Sj = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ Wj
-                S[:, j] = Sj
-
-            W1 = R @ S
-            r = (W1 - W0)[M]
-            W1[M] = W0[M]
-            dt = t - tcurr
-            return np.concatenate([np.mean(W1, axis=1).flatten(), r.flatten()])
-            # return np.concatenate([np.sum(W1, axis=1).flatten(), r.flatten()])
-            # return r.flatten()
-            # return (np.count_nonzero(M, axis=1)[:,None] * W1).flatten()
-
-        # t0 = np.zeros_like(tcurr)
-        # t0[0] = np.mean(data[0,:,0])
-        # t0[t0.shape[0]//2] = np.mean(data[0,:,1])
-        # pylab.imshow(M)
-        # pylab.show()
-        # for j in range(t0.shape[0]//2-1):
-        #     Mj = mask[j] & mask[j+1]
-        #     print(np.count_nonzero(Mj))
-        #     X = data[j,Mj]
-        #     Y = data[j+1,Mj]
-        #     d = np.mean(Y - X, axis=0)
-        #     dx = d[0]
-        #     dy = d[1]
-        #     t0[j+1] = t0[j] + dx
-        #     t0[j+1+t0.shape[0]//2] = t0[j+t0.shape[0]//2] + dy
 
         t1 = np.mean(W, axis=1)
-        # t = scipy.optimize.least_squares(f, np.zeros_like(t1)).x
 
-        # W0 = W - t[:,None]
-        # S = np.zeros((3, num_points))
-        # for j in range(num_points):
-        #     Mj = M[:, j]
-        #     tj = t[Mj]
-        #     Wj = W0[Mj, j]
-        #     Rj = R[Mj, :]
-        #     Sj = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ Wj
-        #     S[:,j] = Sj
-        # W1 = R @ S
-        # r = (W1 - W0)[M]
-        # W1[M] = W0[M]
-        # # print("Centroid: ", np.max(np.mean(W1, axis=1)), np.sum(W1**2), np.sum(r**2))
-        # print("Diff: ", np.max(np.abs(t - t1)))
-        # print(t[0:5])
-        # print(t1[0:5])
-        # pylab.plot(t1 - t)
-        # pylab.show()
-        # exit(0)
         Y = []
         J = []
         Cs = np.zeros(3)
@@ -263,51 +206,16 @@ def refine_model(
             W1 = Rj @ Sj
             Nj = W0.shape[0]
             Cs += Sj
-            Js[:, Mj] += Qj
             Jr = np.zeros((Nj, num_frames))
             Jr[:, Mj] = Rj @ Qj - np.identity(Nj)
+            Js[:, Mj] += Qj
             Y.extend(W1 - W0)
             J.extend(Jr)
         Y = np.concatenate([Y, Cs])
         J = np.concatenate([J, Js])
         t = np.linalg.pinv(J.T @ J) @ (J.T @ Y)
 
-        # pylab.plot(t - t1)
-        # pylab.show()
-        # t = tcurr
-        # for it in range(1):
-
-        #     S = np.zeros((3, num_points))
-        #     for j in range(num_points):
-        #         Mj = M[:, j]
-        #         tj = t[Mj]
-        #         W0 = W[Mj, j] - tj
-        #         Rj = R[Mj, :]
-        #         Sj = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ W0
-        #         S[:,j] = Sj
-
-        #     W1 = R @ S + t[:,None]
-        #     W1[M] = W[M]
-        #     t = np.mean(W1, axis=1)
-        #     r = W1 - t[:,None]
-        #     print(t[0], np.sum((t-t1)**2), np.sum(r**2))
-
         tcurr[:] = t
-
-        # B = np.zeros(num_frames)
-        # A = np.zeros((num_frames, num_frames))
-        # for j in range(num_points):
-        #     Mj = M[:, j]
-        #     W0 = W[Mj, j]
-        #     Rj = R[Mj, :]
-        #     Nj = np.count_nonzero(Mj)
-        #     Qj = np.linalg.inv(Rj.T @ Rj) @ Rj.T
-        #     idx = np.ix_(Mj,Mj)
-        #     I = np.identity(Nj)
-        #     RjQjI = Rj @ Qj - I
-        #     B[Mj] += RjQjI @ W0 @ RjQjI + Qj @ W0 @ Qj
-        #     A[idx] += RjQjI.T @ RjQjI + Qj.T @ Qj
-        # t = np.linalg.pinv(A) @ B
 
         print(t[0], t1[0])
         print("Diff: ", np.max(np.abs(t - t1)))
