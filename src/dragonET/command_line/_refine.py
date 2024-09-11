@@ -177,7 +177,7 @@ def refine_model(
     """
     print("Refining model with %s restrained" % str(restrain))
 
-    tcurr = np.zeros(data.shape[0] * 2)
+    tcurr = np.zeros(data.shape[0] * 2) + 256
 
     def residuals(a, b, c, W, M, restrain):
         import time
@@ -190,26 +190,70 @@ def refine_model(
         # Get the rotation matrices
         Rabc = Rotation.from_euler("yxz", np.stack([c, b, a], axis=1)).as_matrix()
         R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
-        # def f(t):
+        # M = np.ones_like(M)
 
-        #     WW = W - t[:,None]
-        #     S = np.zeros((3, num_points))
-        #     r = []
-        #     for j in range(num_points):
-        #         Mj = M[:, j]
-        #         W0 = WW[Mj, j]
-        #         Rj = R[Mj, :]
-        #         S[:,j] = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ W0
-        #         W1 = Rj @ S[:,j]
-        #         r.extend((W0 - W1))
-        #     r = np.array(r)
-        #     # print(np.mean(S))
-        #     return np.concatenate([S.flatten(), r])
+        def f(t):
+            W0 = W - t[:, None]
+            S = np.zeros((3, num_points))
+            for j in range(num_points):
+                Mj = M[:, j]
+                tj = t[Mj]
+                Wj = W0[Mj, j]
+                Rj = R[Mj, :]
+                Sj = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ Wj
+                S[:, j] = Sj
 
-        # t = scipy.optimize.least_squares(f, tcurr).x
+            W1 = R @ S
+            r = (W1 - W0)[M]
+            W1[M] = W0[M]
+            dt = t - tcurr
+            return np.concatenate([np.mean(W1, axis=1).flatten(), r.flatten()])
+            # return np.concatenate([np.sum(W1, axis=1).flatten(), r.flatten()])
+            # return r.flatten()
+            # return (np.count_nonzero(M, axis=1)[:,None] * W1).flatten()
 
+        # t0 = np.zeros_like(tcurr)
+        # t0[0] = np.mean(data[0,:,0])
+        # t0[t0.shape[0]//2] = np.mean(data[0,:,1])
+        # pylab.imshow(M)
+        # pylab.show()
+        # for j in range(t0.shape[0]//2-1):
+        #     Mj = mask[j] & mask[j+1]
+        #     print(np.count_nonzero(Mj))
+        #     X = data[j,Mj]
+        #     Y = data[j+1,Mj]
+        #     d = np.mean(Y - X, axis=0)
+        #     dx = d[0]
+        #     dy = d[1]
+        #     t0[j+1] = t0[j] + dx
+        #     t0[j+1+t0.shape[0]//2] = t0[j+t0.shape[0]//2] + dy
+
+        t1 = np.mean(W, axis=1)
+        # t = scipy.optimize.least_squares(f, np.zeros_like(t1)).x
+
+        # W0 = W - t[:,None]
+        # S = np.zeros((3, num_points))
+        # for j in range(num_points):
+        #     Mj = M[:, j]
+        #     tj = t[Mj]
+        #     Wj = W0[Mj, j]
+        #     Rj = R[Mj, :]
+        #     Sj = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ Wj
+        #     S[:,j] = Sj
+        # W1 = R @ S
+        # r = (W1 - W0)[M]
+        # W1[M] = W0[M]
+        # # print("Centroid: ", np.max(np.mean(W1, axis=1)), np.sum(W1**2), np.sum(r**2))
+        # print("Diff: ", np.max(np.abs(t - t1)))
+        # print(t[0:5])
+        # print(t1[0:5])
+        # pylab.plot(t1 - t)
+        # pylab.show()
+        # exit(0)
         Y = []
         J = []
+        Cs = np.zeros(3)
+        Js = np.zeros((3, num_frames))
         for j in range(num_points):
             Mj = M[:, j]
             W0 = W[Mj, j]
@@ -217,59 +261,60 @@ def refine_model(
             Qj = np.linalg.inv(Rj.T @ Rj) @ Rj.T
             Sj = Qj @ W0
             W1 = Rj @ Sj
-            rj = W1 - W0
+            Nj = W0.shape[0]
+            Cs += Sj
+            Js[:, Mj] += Qj
+            Jr = np.zeros((Nj, num_frames))
+            Jr[:, Mj] = Rj @ Qj - np.identity(Nj)
+            Y.extend(W1 - W0)
+            J.extend(Jr)
+        Y = np.concatenate([Y, Cs])
+        J = np.concatenate([J, Js])
+        t = np.linalg.pinv(J.T @ J) @ (J.T @ Y)
 
-            Nj = np.count_nonzero(Mj)
-            JSj = np.zeros((3, num_frames))
-            Jrj = np.zeros((Nj, num_frames))
-            JSj[:, Mj] = Qj
-            Jrj[:, Mj] = (Rj @ Qj) - np.identity(Nj)
+        # pylab.plot(t - t1)
+        # pylab.show()
+        # t = tcurr
+        # for it in range(1):
 
-            Y.extend(Sj.flatten())
-            Y.extend(rj)
-            J.extend(JSj)
-            J.extend(Jrj)
+        #     S = np.zeros((3, num_points))
+        #     for j in range(num_points):
+        #         Mj = M[:, j]
+        #         tj = t[Mj]
+        #         W0 = W[Mj, j] - tj
+        #         Rj = R[Mj, :]
+        #         Sj = np.linalg.inv(Rj.T @ Rj) @ Rj.T @ W0
+        #         S[:,j] = Sj
 
-        Y = np.array(Y)
-        J = np.array(J)
+        #     W1 = R @ S + t[:,None]
+        #     W1[M] = W[M]
+        #     t = np.mean(W1, axis=1)
+        #     r = W1 - t[:,None]
+        #     print(t[0], np.sum((t-t1)**2), np.sum(r**2))
 
-        t = np.linalg.pinv(J.T @ J) @ J.T @ Y
+        tcurr[:] = t
 
-        # Compute the translations that centre the points
-        # Y = np.zeros((3, num_points))
-        # J = np.zeros((3, num_points, num_frames))
+        # B = np.zeros(num_frames)
+        # A = np.zeros((num_frames, num_frames))
         # for j in range(num_points):
         #     Mj = M[:, j]
         #     W0 = W[Mj, j]
         #     Rj = R[Mj, :]
+        #     Nj = np.count_nonzero(Mj)
         #     Qj = np.linalg.inv(Rj.T @ Rj) @ Rj.T
-        #     Y[:,j] = -Qj @ W0
-        #     J[:,j,Mj] = -Qj
-        # Y = Y.flatten()
-        # J = J.reshape(3*num_points, num_frames)
-        # t1 = np.linalg.pinv(J.T @ J) @ J.T @ Y
-        t1 = np.mean(W, axis=1)
-        # pylab.plot(t - t1)
-        # pylab.show()
+        #     idx = np.ix_(Mj,Mj)
+        #     I = np.identity(Nj)
+        #     RjQjI = Rj @ Qj - I
+        #     B[Mj] += RjQjI @ W0 @ RjQjI + Qj @ W0 @ Qj
+        #     A[idx] += RjQjI.T @ RjQjI + Qj.T @ Qj
+        # t = np.linalg.pinv(A) @ B
+
+        print(t[0], t1[0])
         print("Diff: ", np.max(np.abs(t - t1)))
 
-        # print(t[0])
         tcurr[:] = t
 
-        # S = np.zeros((3, num_points))
-        # for j in range(num_points):
-        #     Mj = M[:, j]
-        #     W0 = (W - t[:,None])[Mj, j]
-        #     Rj = R[Mj, :]
-        #     Qj = np.linalg.inv(Rj.T @ Rj) @ Rj.T
-        #     S[:,j] = -Qj @ W0
-
-        # W1 = R @ S
-        # print(np.mean(S))
-        # WW = R @ S
         W = W - t[:, None]
-        # print(np.mean(W))
-        # print(np.mean(W1))
 
         # For each point, compute the residuals
         r = []
@@ -283,10 +328,17 @@ def refine_model(
 
         print(
             "Global angle %.1f; Shift: %s; RMSD: %.3f"
-            % (np.degrees(b[0]), t[0], np.sqrt(np.mean(r**2)))
+            % (np.degrees(a[0]), t[0], np.sqrt(np.mean(r**2)))
         )
         # print("Fun: %f" % (time.time() - st))
 
+        da = a[:-2] - 2 * a[1:-1] + a[2:]
+        db = b[:-2] - 2 * b[1:-1] + b[2:]
+        # da = a - np.convolve(a, np.ones(11)/11, mode="same")
+        # db = b - np.convolve(b, np.ones(11)/11, mode="same")
+        # r = np.concatenate([r, np.degrees(b)])
+        # r = np.concatenate([r, np.degrees(da)])
+        # r = np.concatenate([r, np.degrees(db)])
         return r
 
     def jacobian(a, b, c, W, M, restrain):
@@ -650,8 +702,8 @@ def _refine(
         # Check that each image has atleast 4 observations
         from matplotlib import pylab
 
-        pylab.imshow(mask)
-        pylab.show()
+        # pylab.imshow(mask)
+        # pylab.show()
         obs_per_image = np.count_nonzero(mask, axis=1)
         if np.any(obs_per_image < 3):
             raise RuntimeError(
