@@ -160,11 +160,11 @@ def refine(args: List[str] = None):
 
 
 def refine_model(
+    dx,
+    dy,
     a,
     b,
     c,
-    dy,
-    dx,
     data,
     mask,
     restrain=None,
@@ -177,7 +177,7 @@ def refine_model(
     """
     print("Refining model with %s restrained" % str(restrain))
 
-    def residuals(dy, dx, a, b, c, W, M, restrain):
+    def residuals(dx, dy, a, b, c, W, M, restrain):
         # Get num frames and num points
         num_frames = W.shape[0]
         num_points = W.shape[1]
@@ -186,8 +186,10 @@ def refine_model(
         Rabc = Rotation.from_euler("yxz", np.stack([c, b, a], axis=1)).as_matrix()
         R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
 
+        # Get the translation
         t = np.concatenate([dx, dy], axis=0)
 
+        # Subtract the translation
         W = W - t[:, None]
 
         # For each point, compute the residuals
@@ -208,12 +210,80 @@ def refine_model(
             % (np.degrees(a[0]), t[0], np.sqrt(np.mean(r**2)))
         )
 
-        da = a[:-2] - 2 * a[1:-1] + a[2:]
-        db = b[:-2] - 2 * b[1:-1] + b[2:]
-        r = np.concatenate([r, C])  # , np.degrees(b), np.degrees(da), np.degrees(db)])
+        # Add the centroids to the residuals
+        r = np.concatenate([r, C])
+
+        # Return the residuals and the regularisation
         return r
 
-    def jacobian(dy, dx, a, b, c, W, M, restrain):
+    def penalties(dx, dy, a, b, c, W, M, restrain):
+        # Add the regularisations:
+        # For b in to close to zero
+        # For a to vary smoothly
+        # For b to vary smoothly
+        # For c to vary smoothly
+        refine = {None: ["a", "b", "c"], "c": ["a", "b"], "bc": ["a"]}[restrain]
+        return np.concatenate(
+            [
+                np.degrees(b) if "b" in refine else [],
+                np.degrees(a[:-2] - 2 * a[1:-1] + a[2:]) if "a" in refine else [],
+                np.degrees(b[:-2] - 2 * b[1:-1] + b[2:]) if "b" in refine else [],
+                np.degrees(c[:-2] - 2 * c[1:-1] + c[2:]) if "c" in refine else [],
+            ]
+        )
+
+    def jacobian(dx, dy, a, b, c, W, M, restrain):
+        def d_dt(dx, dy, a, b, c, W, M):
+            # Get num frames and num points
+            num_params = W.shape[0]
+            num_points = W.shape[1]
+
+            # Get the rotation matrices
+            Ra = Rotation.from_euler("z", a).as_matrix()
+            Rb = Rotation.from_euler("x", b).as_matrix()
+            Rc = Rotation.from_euler("y", c).as_matrix()
+            Rabc = Ra @ Rb @ Rc
+
+            # Construct the rotation matrices
+            R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
+
+            # Initialise the derivatives of the centroid w.r.t the parameters
+            dC_dt = np.zeros((3, num_params))
+
+            # For each point add the elements of the Jacobian
+            J = []
+            for j in range(num_points):
+                # Get the mask, observations, rotation matrices
+                Mj = M[:, j]
+                Nj = np.count_nonzero(Mj)
+                W0 = W[Mj, j]
+                Rj = R[Mj, :]
+                Qj = np.linalg.inv(Rj.T @ Rj) @ Rj.T
+
+                # Compute the derivative of the residuals w.r.t dx and dy
+                dtj_dt = np.identity(Nj)
+                dSj_dt = -Qj @ dtj_dt
+                drj_dt = -dtj_dt - Rj @ dSj_dt
+
+                # We need to put these subset of the results into an array with
+                # zeros for the other frames
+                dr_dt = np.zeros((Nj, num_params))
+                dS_dt = np.zeros((3, num_params))
+                dr_dt[:, Mj] = drj_dt
+                dS_dt[:, Mj] = dSj_dt
+
+                # Add the derivatives to the centroid derivative
+                dC_dt += dS_dt
+
+                # Add the derivatives of the residuals w.r.t dy and dx
+                J.extend(dr_dt)
+
+            # Add the derivatives of the residuals w.r.t the centroid
+            J.extend(dC_dt)
+
+            # Return as a numpy array
+            return np.array(J)
+
         def d_dp(Rabc, dRabc_dp, W, M):
             # Get num frames and num points
             num_frames = W.shape[0] // 2
@@ -252,9 +322,9 @@ def refine_model(
                 RjTRj_inv = np.linalg.inv(RjT @ Rj)
                 H1 = dRj_dp_i @ RjTRj_inv @ RjT
                 H2 = Rj @ RjTRj_inv @ dRj_dp_iT
-                # H3 = Rj @ RjTRj_inv @ RjT
-                # dr_dp_i = -(H1 + H2 - (H2 @ H3 + H3 @ H1)) @ W0
-                dr_dp_i = -(H1 + H2) @ W0
+                H3 = Rj @ RjTRj_inv @ RjT
+                dr_dp_i = -(H1 + H2 - (H2 @ H3 + H3 @ H1)) @ W0
+                # dr_dp_i = -(H1 + H2) @ W0
 
                 # We need to put these subset of the results into an array with
                 # zeros for the other frames
@@ -281,78 +351,7 @@ def refine_model(
             # Return as a numpy array
             return np.array(J)
 
-        def d_dt(dy, dx, a, b, c, W, M):
-            # Get num frames and num points
-            num_frames = a.shape[0]
-            num_points = W.shape[1]
-
-            # Get the rotation matrices
-            Ra = Rotation.from_euler("z", a).as_matrix()
-            Rb = Rotation.from_euler("x", b).as_matrix()
-            Rc = Rotation.from_euler("y", c).as_matrix()
-            Rabc = Ra @ Rb @ Rc
-
-            # Construct the rotation matrices
-            R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
-
-            # Initialise the derivatives of the centroid w.r.t the parameters
-            dC_dy = np.zeros((3, num_frames))
-            dC_dx = np.zeros((3, num_frames))
-
-            # For each point add the elements of the Jacobian
-            Jy = []
-            Jx = []
-            for j in range(num_points):
-                # Get the mask, observations, rotation matrices
-                Mj = M[:, j]
-                Nj = np.count_nonzero(Mj)
-                W0 = W[Mj, j]
-                Rj = R[Mj, :]
-                Qj = np.linalg.inv(Rj.T @ Rj) @ Rj.T
-
-                # Construct the derivatives w.r.t dx and dy
-                dt_dy_i = np.zeros((Nj, Nj))
-                dt_dx_i = np.zeros((Nj, Nj))
-                dt_dy_i[Nj // 2 :, Nj // 2 :] = np.identity(Nj // 2)
-                dt_dx_i[: Nj // 2, : Nj // 2] = np.identity(Nj // 2)
-
-                # Multiply by derivative matrices
-                Uj = Qj @ dt_dy_i
-                Vj = Qj @ dt_dx_i
-
-                # Compute derivatives of the residuals w.r.t dy and dx
-                dr_dy_i = Rj @ Uj - dt_dy_i
-                dr_dx_i = Rj @ Vj - dt_dx_i
-
-                # We need to put these subset of the results into an array with
-                # zeros for the other frames
-                dr_dx = np.zeros((dr_dx_i.shape[1], num_frames))
-                dr_dy = np.zeros((dr_dy_i.shape[1], num_frames))
-                dr_dx[:, Mj[:num_frames]] = dr_dx_i[: Nj // 2].T
-                dr_dy[:, Mj[:num_frames]] = dr_dy_i[Nj // 2 :].T
-
-                # Compute the derivatives of S w.r.t to dy and dx
-                dS_dy = np.zeros((3, num_frames))
-                dS_dx = np.zeros((3, num_frames))
-                dS_dy[:, Mj[:num_frames]] = -Uj[:, Nj // 2 :]
-                dS_dx[:, Mj[:num_frames]] = -Vj[:, : Nj // 2]
-
-                # Add the derivatives to the centroid derivative
-                dC_dy += dS_dy
-                dC_dx += dS_dx
-
-                # Add the derivatives of the residuals w.r.t dy and dx
-                Jy.extend(dr_dy)
-                Jx.extend(dr_dx)
-
-            # Add the derivatives of the residuals w.r.t the centroid
-            Jy.extend(dC_dy)
-            Jx.extend(dC_dx)
-
-            # Return as a numpy array
-            return np.concatenate([Jy, Jx], axis=1)
-
-        def d_da(dy, dx, a, b, c, W, M):
+        def d_da(dx, dy, a, b, c, W, M):
             # Get num frames and num points
             num_frames = a.shape[0]
             num_points = W.shape[1]
@@ -364,7 +363,7 @@ def refine_model(
             Rabc = Ra @ Rb @ Rc
 
             # Compute the derivative of Ra w.r.t a
-            dRa_da = np.full((num_frames, 3, 3), np.eye(3))
+            dRa_da = np.zeros((num_frames, 3, 3))
             dRa_da[:, 0, 0] = -np.sin(a)
             dRa_da[:, 0, 1] = -np.cos(a)
             dRa_da[:, 1, 0] = np.cos(a)
@@ -374,7 +373,7 @@ def refine_model(
             # Compute derivatices of residuals w.r.t a
             return d_dp(Rabc, dRabc_da, W, M)
 
-        def d_db(dy, dx, a, b, c, W, M):
+        def d_db(dx, dy, a, b, c, W, M):
             # Get num frames and num points
             num_frames = a.shape[0]
             num_points = W.shape[1]
@@ -386,7 +385,7 @@ def refine_model(
             Rabc = Ra @ Rb @ Rc
 
             # Compute the derivative of Ra w.r.t a
-            dRb_db = np.full((num_frames, 3, 3), np.eye(3))
+            dRb_db = np.zeros((num_frames, 3, 3))
             dRb_db[:, 1, 1] = -np.sin(b)
             dRb_db[:, 1, 2] = -np.cos(b)
             dRb_db[:, 2, 1] = np.cos(b)
@@ -396,7 +395,7 @@ def refine_model(
             # Compute derivatices of residuals w.r.t b
             return d_dp(Rabc, dRabc_db, W, M)
 
-        def d_dc(dy, dx, a, b, c, W, M):
+        def d_dc(dx, dy, a, b, c, W, M):
             # Get num frames and num points
             num_frames = a.shape[0]
             num_points = W.shape[1]
@@ -408,7 +407,7 @@ def refine_model(
             Rabc = Ra @ Rb @ Rc
 
             # Compute the derivative of Ra w.r.t a
-            dRc_dc = np.full((num_frames, 3, 3), np.eye(3))
+            dRc_dc = np.zeros((num_frames, 3, 3))
             dRc_dc[:, 0, 0] = -np.sin(c)
             dRc_dc[:, 2, 0] = -np.cos(c)
             dRc_dc[:, 0, 2] = np.cos(c)
@@ -430,9 +429,62 @@ def refine_model(
 
         # Compute the Jacobian elements
         r = np.concatenate(
-            [d_dp(dy, dx, a, b, c, W, M) for d_dp in derivatives[restrain]], axis=1
+            [d_dp(dx, dy, a, b, c, W, M) for d_dp in derivatives[restrain]], axis=1
         )
         return r
+
+    def jacobian_penalties(dx, dy, a, b, c, W, M, restrain):
+        # Indices
+        a0 = dy.shape[0] + dx.shape[0]
+        a1 = b0 = a0 + a.shape[0]
+        b1 = c0 = b0 + b.shape[0]
+        c1 = c0 + c.shape[0]
+
+        # Get the number of parameters
+        num_params = {None: c1, "c": b1, "bc": a1}[restrain]
+
+        # Derivative of angle w.r.t angle
+        da_da = np.identity(a.shape[0])
+        db_db = np.identity(b.shape[0])
+        dc_dc = np.identity(c.shape[0])
+
+        def db_dp():
+            J = np.zeros((db_db.shape[0], num_params))
+            J[:, b0:b1] = db_db
+            return J
+
+        def dfa_dp():
+            J = np.zeros((da_da.shape[0] - 2, num_params))
+            J[:, a0:a1] = da_da[:-2, :] - 2 * da_da[1:-1, :] + da_da[2:, :]
+            return J
+
+        def dfb_dp():
+            J = np.zeros((db_db.shape[0] - 2, num_params))
+            J[:, b0:b1] = db_db[:-2, :] - 2 * db_db[1:-1, :] + db_db[2:, :]
+            return J
+
+        def dfc_dp():
+            J = np.zeros((dc_dc.shape[0] - 2, num_params))
+            J[:, c0:c1] = dc_dc[:-2, :] - 2 * dc_dc[1:-1, :] + dc_dc[2:, :]
+            return J
+
+        # Add the regularisations:
+        # For a to vary smoothly
+        # For b to vary smoothly and be close to zero
+        # For c to vary smoothly
+        refine = {None: ["a", "b", "c"], "c": ["a", "b"], "bc": ["a"]}[restrain]
+        not_none = lambda x: [xx for xx in x if xx is not None]
+        return np.concatenate(
+            not_none(
+                [
+                    np.degrees(db_dp()) if "b" in refine else None,
+                    np.degrees(dfa_dp()) if "a" in refine else None,
+                    np.degrees(dfb_dp()) if "b" in refine else None,
+                    np.degrees(dfc_dp()) if "c" in refine else None,
+                ]
+            ),
+            axis=0,
+        )
 
     def predict(a, b, c, t, W, M):
         # Get number of points
@@ -453,12 +505,12 @@ def refine_model(
         # Compute the predicted positions
         return R @ S + t[:, None]
 
-    def get_params_and_args(dy, dx, a, b, c, W, M, restrain=None):
+    def get_params_and_args(dx, dy, a, b, c, W, M, restrain=None):
         assert restrain in [None, "bc", "c"]
         params, args = {
-            None: ([dy, dx, a, b, c], [W, M, restrain]),
-            "c": ([dy, dx, a, b], [c, W, M, restrain]),
-            "bc": ([dy, dx, a], [b, c, W, M, restrain]),
+            None: ([dx, dy, a, b, c], [W, M, restrain]),
+            "c": ([dx, dy, a, b], [c, W, M, restrain]),
+            "bc": ([dx, dy, a], [b, c, W, M, restrain]),
         }[restrain]
         return np.array(params).flatten(), tuple(args)
 
@@ -466,28 +518,30 @@ def refine_model(
         restrain = args[-1]
         assert restrain in [None, "bc", "c"]
         if restrain is None:
-            (dy, dx, a, b, c), (W, M, _) = x.reshape(5, -1), args
+            (dx, dy, a, b, c), (W, M, _) = x.reshape(5, -1), args
         elif restrain == "c":
-            (dy, dx, a, b), (c, W, M, _) = x.reshape(4, -1), args
+            (dx, dy, a, b), (c, W, M, _) = x.reshape(4, -1), args
         elif restrain == "bc":
-            (dy, dx, a), (b, c, W, M, _) = x.reshape(3, -1), args
-        return dy, dx, a, b, c, W, M, restrain
+            (dx, dy, a), (b, c, W, M, _) = x.reshape(3, -1), args
+        return dx, dy, a, b, c, W, M, restrain
 
-    def parse_results(x, dy, dx, a, b, c, restrain=None):
+    def parse_results(x, dx, dy, a, b, c, restrain=None):
         assert restrain in [None, "bc", "c"]
         if restrain is None:
-            dy, dx, a, b, c = x.reshape(5, -1)
+            dx, dy, a, b, c = x.reshape(5, -1)
         elif restrain == "c":
-            dy, dx, a, b = x.reshape(4, -1)
+            dx, dy, a, b = x.reshape(4, -1)
         elif restrain == "bc":
-            dy, dx, a = x.reshape(3, -1)
-        return dy, dx, a, b, c
+            dx, dy, a = x.reshape(3, -1)
+        return dx, dy, a, b, c
 
     def fun(x, *args):
-        return residuals(*parse_params_and_args(x, *args))
+        args = parse_params_and_args(x, *args)
+        return np.concatenate([residuals(*args), penalties(*args)])
 
     def jac(x, *args):
-        return jacobian(*parse_params_and_args(x, *args))
+        args = parse_params_and_args(x, *args)
+        return np.concatenate([jacobian(*args), jacobian_penalties(*args)], axis=0)
 
     # Construct the input
     X = data[:, :, 0]
@@ -498,12 +552,8 @@ def refine_model(
 
     # Iterate a number of times until convergence
     for it in range(1):  # max_iter):
-        # Get the centroid subtracted observations
-        # W = Wc - t[:, None]
-        # tcurr[:] = t[:]
-
         # Get the params and arguments
-        params, args = get_params_and_args(dy, dx, a, b, c, Wc, M, restrain)
+        params, args = get_params_and_args(dx, dy, a, b, c, Wc, M, restrain)
 
         # Perform the least squares minimisation
         result = scipy.optimize.least_squares(
@@ -512,31 +562,12 @@ def refine_model(
             args=args,
             jac=jac,
             loss="linear",
+            # max_nfev=1,
             # bounds=[np.radians(-180), np.radians(180)],
         )
 
         # Get the results
-        dy, dx, a, b, c = parse_results(result.x, dy, dx, a, b, c, restrain)
-
-        # t = tcurr
-        t = np.concatenate([dx, dy], axis=0)
-
-        # Predict the positions on each image and fill the missing data entries
-        # W1 = predict(a, b, c, t, W, M)
-        # Wc[~M] = W1[~M]
-
-        # Compute the new centroid. If the difference between the new and old
-        # translations is less than a given threshold then break
-        # t, told = np.mean(Wc, axis=1), t
-        # tdiff = np.sqrt(np.mean((t - told) ** 2))
-        # print("Centroid shifted by %.3f pixels" % tdiff)
-
-        # Break if translation is smaller than a threshold
-        # if tdiff < teps:
-        #    break
-
-    # Get the translations
-    dx, dy = t.reshape(2, -1)
+        dx, dy, a, b, c = parse_results(result.x, dx, dy, a, b, c, restrain)
 
     # Compute the RMSD
     rmsd = np.sqrt(result.cost / np.count_nonzero(mask))
@@ -544,7 +575,7 @@ def refine_model(
     print("RMSD: %f" % rmsd)
 
     # Return the refined parameters and RMSD
-    return a, b, c, dy, dx, rmsd
+    return a, b, c, dx, dy, rmsd
 
 
 def _refine(
@@ -668,39 +699,12 @@ def _refine(
                 % ("\n".join(map(str, np.where(obs_per_point < 2)[0])))
             )
 
-    def check_connections(contours):
+    def check_connections(mask):
         # Create lookup tables to check each point and each image is touched
-        lookup_image = np.zeros(len(set(contours["z"])))
-        lookup_point = np.zeros(len(set(contours["index"])))
-
-        def traverse_point(contours, index):
-            if not lookup_point[index]:
-                lookup_point[index] = 1
-                for z in contours["z"][contours["index"] == index]:
-                    traverse_image(contours, z)
-
-        def traverse_image(contours, z):
-            if not lookup_image[z]:
-                lookup_image[z] = 1
-                for index in contours["index"][contours["z"] == z]:
-                    traverse_point(contours, index)
-
-        # Traverse the contours and check that each image and each point is
-        # linked to all other points and images
-        traverse_image(contours, contours["z"][0])
-
-        # Check if any images are not touched
-        if np.any(lookup_image == 0):
+        r, n = scipy.ndimage.label(mask)
+        if n != 1:
             raise RuntimeError(
-                "The following images are not linked: %s"
-                % ("\n".join(map(str, np.where(lookup_image == 0)[0])))
-            )
-
-        # Check if any points are not touched
-        if np.any(lookup_point == 0):
-            raise RuntimeError(
-                "The following point are not linked: %s"
-                % ("\n".join(map(str, np.where(lookup_point == 0)[0])))
+                "All points and images are not connected: %d regions detected" % (n)
             )
 
     # Read the model
@@ -709,16 +713,18 @@ def _refine(
     # Read the points
     data, mask = read_points(contours)
 
-    # Read the initial model and convert degrees to radians for use here
+    # The image size
+    image_size = model["image_size"]
+
+    # Read the initial model add 1/2 image size and convert degrees to radians
     P = np.array(model["transform"], dtype=float)
     a = np.radians(P[:, 0])
     b = np.radians(P[:, 1])
     c = np.radians(P[:, 2])
     dy = P[:, 3]
     dx = P[:, 4]
-
-    # The image size
-    image_size = model["image_size"]
+    dy += image_size[0] // 2
+    dx += image_size[1] // 2
 
     # The number of images and points
     assert data.shape[0] == P.shape[0]
@@ -728,7 +734,7 @@ def _refine(
     # Perform some checks on the contours
     check_obs_per_image(mask)
     check_obs_per_point(mask)
-    # check_connections(contours)
+    check_connections(mask)
     print("Num images: %d" % num_images)
     print("Num contours: %d" % num_points)
     print("Num observations: %d" % np.count_nonzero(mask))
@@ -737,19 +743,15 @@ def _refine(
     data = data[:, select]
     mask = mask[:, select]
 
-    dy += 256
-    dx += 256
-
     # Run through the cycles of refinement
     for restrain in get_cycles(fix):
-        a, b, c, dy, dx, rmsd = refine_model(
-            a, b, c, dy, dx, data, mask, restrain=restrain
+        a, b, c, dx, dy, rmsd = refine_model(
+            dx, dy, a, b, c, data, mask, restrain=restrain
         )
 
-    dy -= 256
-    dx -= 256
-
-    # Update the model and convert back to degrees
+    # Update the model, remove 1/2 image size and convert back to degrees
+    dy -= image_size[0] // 2
+    dx -= image_size[1] // 2
     P = np.stack([np.degrees(a), np.degrees(b), np.degrees(c), dy, dx], axis=1)
     model["transform"] = P.tolist()
 
