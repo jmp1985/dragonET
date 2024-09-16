@@ -1,4 +1,6 @@
 from dragonET.command_line._align import *  # noqa
+from dragonET.command_line._contours_extend import *  # noqa
+from dragonET.command_line._contours_triangulate import *  # noqa
 from dragonET.command_line._new import *  # noqa
 from dragonET.command_line._pick import *  # noqa
 from dragonET.command_line._project import *  # noqa

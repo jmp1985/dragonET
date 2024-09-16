@@ -83,6 +83,8 @@ test = [
 
 "dragonET.new" = "dragonET.command_line:new"
 "dragonET.align" = "dragonET.command_line:align"
+"dragonET.contours.extend" = "dragonET.command_line:contours_extend"
+"dragonET.contours.triangulate" = "dragonET.command_line:contours_triangulate"
 "dragonET.pick" = "dragonET.command_line:pick"
 "dragonET.project" = "dragonET.command_line:project"
 "dragonET.refine" = "dragonET.command_line:refine"
