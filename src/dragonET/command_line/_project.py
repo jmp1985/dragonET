@@ -282,6 +282,21 @@ def _project_with_astra(
     return projections
 
 
+def project_internal(volume, P, pixel_size, axis, axis_origin, mode):
+    """
+    Project the image
+
+    """
+    # Get the image size
+    image_size = (volume.shape[0], volume.shape[2])
+
+    # Prepare the geometry vector description
+    vectors = _prepare_astra_geometry(P, pixel_size, image_size, axis, axis_origin)
+
+    # Do the projection with astra
+    return _project_with_astra(volume, vectors, image_size, mode)
+
+
 def _project(
     volume_filename: str,
     model_filename: str,
@@ -316,22 +331,6 @@ def _project(
 
     def normalise(v):
         return v / np.linalg.norm(v)
-
-    def projections_shape_from_volume_shape(shape):
-        return (
-            shape[0],
-            shape[2],
-        )
-
-    def project_internal(volume, P, pixel_size, axis, axis_origin, mode):
-        # Get the image size
-        image_size = projections_shape_from_volume_shape(volume.shape)
-
-        # Prepare the geometry vector description
-        vectors = _prepare_astra_geometry(P, pixel_size, image_size, axis, axis_origin)
-
-        # Do the projection with astra
-        return _project_with_astra(volume, vectors, image_size, mode)
 
     # Read the model
     model = read_model(model_filename)

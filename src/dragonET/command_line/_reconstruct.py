@@ -334,6 +334,21 @@ def _reconstruct_with_astra(
     return volume
 
 
+def recon(projections, P, volume, pixel_size, axis, axis_origin, num_iterations, mode):
+    """
+    Do the reconstruction
+
+    """
+    # Get the image size
+    image_size = projections.shape[::2]
+
+    # Prepare the geometry vector description
+    vectors = _prepare_astra_geometry(P, pixel_size, image_size, axis, axis_origin)
+
+    # Do the reconstruction with astra
+    return _reconstruct_with_astra(projections, vectors, volume, num_iterations, mode)
+
+
 def _reconstruct(
     projections_filename: str,
     model_filename: str,
@@ -392,20 +407,6 @@ def _reconstruct(
             shape[0],
             shape[2],
             shape[2],
-        )
-
-    def recon(
-        projections, P, volume, pixel_size, axis, axis_origin, num_iterations, mode
-    ):
-        # Get the image size
-        image_size = projections.shape[::2]
-
-        # Prepare the geometry vector description
-        vectors = _prepare_astra_geometry(P, pixel_size, image_size, axis, axis_origin)
-
-        # Do the reconstruction with astra
-        return _reconstruct_with_astra(
-            projections, vectors, volume, num_iterations, mode
         )
 
     # Read the model
