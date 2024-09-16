@@ -126,24 +126,17 @@ def get_matrix_from_parameters(P):
 
     """
 
-    # The transformation
+    # Create the rotation matrix for each image
     a = np.radians(P[:, 0])  # Yaw
     b = np.radians(P[:, 1])  # Pitch
     c = np.radians(P[:, 2])  # Roll
-    shifty = P[:, 3]  # Shift Y
-    shiftx = P[:, 4]  # Shift X
-
-    # Create the rotation matrix for each image
-    Ra = Rotation.from_euler("z", a).as_matrix()
-    Rb = Rotation.from_euler("x", b).as_matrix()
-    Rc = Rotation.from_euler("y", c).as_matrix()
-    Rabc = Ra @ Rb @ Rc
+    Rabc = Rotation.from_euler("yxz", np.stack([c, b, a]).T).as_matrix()
 
     # Construct the matrix from the parameters
     R = np.full((P.shape[0], 4, 4), np.eye(4))
     R[:, :3, :3] = Rabc
-    R[:, 0, 3] = shiftx
-    R[:, 1, 3] = shifty
+    R[:, 0, 3] = P[:, 4]  # Shift X
+    R[:, 1, 3] = P[:, 3]  # Shift Y
     return R
 
 
@@ -191,7 +184,7 @@ def predict_image(data: np.ndarray, P_data: np.ndarray, P_image: np.ndarray):
     height = int(np.ceil(np.max(data.shape[1:]) * np.max(np.abs(np.sin(diff_angle)))))
 
     # Init the volume
-    shape = (data.shape[1] * 2, height * 2, data.shape[2] * 2)
+    shape = (data.shape[1], height, data.shape[2])
     volume = np.zeros(shape, dtype="float32")
 
     # Prepare to reconstruct
