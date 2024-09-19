@@ -182,6 +182,9 @@ def refine_model(
         num_frames = W.shape[0]
         num_points = W.shape[1]
 
+        # idx = np.argmin(np.abs(c))
+        # b[idx] = 0
+
         # Get the rotation matrices
         Rabc = Rotation.from_euler("yxz", np.stack([c, b, a], axis=1)).as_matrix()
         R = np.concatenate([Rabc[:, 0, :], Rabc[:, 1, :]], axis=0)
@@ -206,8 +209,15 @@ def refine_model(
         r = np.array(r)
 
         print(
-            "Global angle %.1f; Shift: %s; RMSD: %.3f"
-            % (np.degrees(a[0]), t[0], np.sqrt(np.mean(r**2)))
+            "First image: dx=%.1f, dy=%.1f, a= %.1f, b=%.1f, c=%.1f; RMSD: %.3f"
+            % (
+                dx[0],
+                dy[0],
+                np.degrees(a[0]),
+                np.degrees(b[0]),
+                np.degrees(c[0]),
+                np.sqrt(np.mean(r**2)),
+            )
         )
 
         # Add the centroids to the residuals
@@ -225,7 +235,8 @@ def refine_model(
         refine = {None: ["a", "b", "c"], "c": ["a", "b"], "bc": ["a"]}[restrain]
         return np.concatenate(
             [
-                np.degrees(b) if "b" in refine else [],
+                # [100*np.degrees(b[45])] if "b" in refine else [],
+                # 0.0*np.degrees(b) if "b" in refine else [],
                 np.degrees(a[:-2] - 2 * a[1:-1] + a[2:]) if "a" in refine else [],
                 np.degrees(b[:-2] - 2 * b[1:-1] + b[2:]) if "b" in refine else [],
                 np.degrees(c[:-2] - 2 * c[1:-1] + c[2:]) if "c" in refine else [],
@@ -417,6 +428,9 @@ def refine_model(
             # Compute derivatices of residuals w.r.t c
             return d_dp(Rabc, dRabc_dc, W, M)
 
+        # idx = np.argmin(np.abs(c))
+        # b[idx] = 0
+
         # Check which parameters are to be restrained
         assert restrain in [None, "bc", "c"]
         derivatives = {
@@ -448,6 +462,9 @@ def refine_model(
         db_db = np.identity(b.shape[0])
         dc_dc = np.identity(c.shape[0])
 
+        # db0_dp = np.zeros((1, num_params))
+        # db0_dp[0, b0 + 45] = 1
+
         def db_dp():
             J = np.zeros((db_db.shape[0], num_params))
             J[:, b0:b1] = db_db
@@ -477,7 +494,8 @@ def refine_model(
         return np.concatenate(
             not_none(
                 [
-                    np.degrees(db_dp()) if "b" in refine else None,
+                    # 100 * np.degrees(db0_dp) if "b" in refine else None,
+                    # 0.0*np.degrees(db_dp()) if "b" in refine else None,
                     np.degrees(dfa_dp()) if "a" in refine else None,
                     np.degrees(dfb_dp()) if "b" in refine else None,
                     np.degrees(dfc_dp()) if "c" in refine else None,
@@ -515,6 +533,11 @@ def refine_model(
         return np.array(params).flatten(), tuple(args)
 
     def parse_params_and_args(x, *args):
+        #         indices = args[-1]
+        #         P = args[-2]
+        #         P[indices] = x
+        #         return P[:,0], P[:,1], P[:,2], P[:,3], P[:,4], W, M, indices
+
         restrain = args[-1]
         assert restrain in [None, "bc", "c"]
         if restrain is None:
@@ -535,13 +558,44 @@ def refine_model(
             dx, dy, a = x.reshape(3, -1)
         return dx, dy, a, b, c
 
+    # def get_bounds(dx, dy, a, b, c, restrain):
+
+    #     # The parameter bounds
+    #     dx_min = np.full(dx.shape, -np.inf)
+    #     dx_max = np.full(dx.shape, np.inf)
+    #     dy_min = np.full(dy.shape, -np.inf)
+    #     dy_max = np.full(dy.shape, np.inf)
+    #     a_min = np.full(a.shape, -np.radians(180))
+    #     a_max = np.full(a.shape, np.radians(180))
+    #     b_min = np.full(a.shape, -np.radians(180))
+    #     b_max = np.full(a.shape, np.radians(180))
+    #     c_min = np.full(a.shape, -np.radians(180))
+    #     c_max = np.full(a.shape, np.radians(180))
+
+    #     # Set zero angle to zero
+    #     b_min[45] = -1e-15
+    #     b_max[45] = +1e-15
+
+    #     if restrain is None:
+    #         bounds_min = np.concatenate([dx_min, dy_min, a_min, b_min, c_min])
+    #         bounds_max = np.concatenate([dx_max, dy_max, a_max, b_max, c_max])
+    #     elif restrain == "c":
+    #         bounds_min = np.concatenate([dx_min, dy_min, a_min, b_min])
+    #         bounds_max = np.concatenate([dx_max, dy_max, a_max, b_max])
+    #     elif restrain == "bc":
+    #         bounds_min = np.concatenate([dx_min, dy_min, a_min])
+    #         bounds_max = np.concatenate([dx_max, dy_max, a_max])
+    #     return bounds_min, bounds_max
+
     def fun(x, *args):
         args = parse_params_and_args(x, *args)
-        return np.concatenate([residuals(*args), penalties(*args)])
+        return np.concatenate([residuals(*args)])  # , penalties(*args)])
 
     def jac(x, *args):
         args = parse_params_and_args(x, *args)
-        return np.concatenate([jacobian(*args), jacobian_penalties(*args)], axis=0)
+        return np.concatenate(
+            [jacobian(*args)]
+        )  # , jacobian_penalties(*args)], axis=0)
 
     # Construct the input
     X = data[:, :, 0]
@@ -550,24 +604,26 @@ def refine_model(
     M = np.concatenate([mask, mask], axis=0)
     Wc = np.concatenate([X, Y], axis=0)
 
-    # Iterate a number of times until convergence
-    for it in range(1):  # max_iter):
-        # Get the params and arguments
-        params, args = get_params_and_args(dx, dy, a, b, c, Wc, M, restrain)
+    # Get the params and arguments
+    params, args = get_params_and_args(dx, dy, a, b, c, Wc, M, restrain)
 
-        # Perform the least squares minimisation
-        result = scipy.optimize.least_squares(
-            fun,
-            params,
-            args=args,
-            jac=jac,
-            loss="linear",
-            # max_nfev=1,
-            # bounds=[np.radians(-180), np.radians(180)],
-        )
+    # Get the bounds
+    # bounds = get_bounds(dx, dy, a, b, c, restrain)
 
-        # Get the results
-        dx, dy, a, b, c = parse_results(result.x, dx, dy, a, b, c, restrain)
+    # Perform the least squares minimisation
+    result = scipy.optimize.least_squares(
+        fun,
+        params,
+        args=args,
+        jac=jac,
+        loss="linear",
+        # bounds=bounds,
+        # max_nfev=1,
+        # bounds=[np.radians(-180), np.radians(180)],
+    )
+
+    # Get the results
+    dx, dy, a, b, c = parse_results(result.x, dx, dy, a, b, c, restrain)
 
     # Compute the RMSD
     rmsd = np.sqrt(result.cost / np.count_nonzero(mask))
@@ -575,7 +631,7 @@ def refine_model(
     print("RMSD: %f" % rmsd)
 
     # Return the refined parameters and RMSD
-    return a, b, c, dx, dy, rmsd
+    return dx, dy, a, b, c, rmsd
 
 
 def _refine(
@@ -734,7 +790,7 @@ def _refine(
     # Perform some checks on the contours
     check_obs_per_image(mask)
     check_obs_per_point(mask)
-    check_connections(mask)
+    # check_connections(mask)
     print("Num images: %d" % num_images)
     print("Num contours: %d" % num_points)
     print("Num observations: %d" % np.count_nonzero(mask))
@@ -745,7 +801,7 @@ def _refine(
 
     # Run through the cycles of refinement
     for restrain in get_cycles(fix):
-        a, b, c, dx, dy, rmsd = refine_model(
+        dx, dy, a, b, c, rmsd = refine_model(
             dx, dy, a, b, c, data, mask, restrain=restrain
         )
 
