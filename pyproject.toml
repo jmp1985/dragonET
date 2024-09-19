@@ -95,6 +95,7 @@ test = [
 "dragonET.stack.edit" = "dragonET.command_line:stack_edit"
 "dragonET.stack.predict" = "dragonET.command_line:stack_predict"
 "dragonET.stack.rebin" = "dragonET.command_line:stack_rebin"
+"dragonET.stack.rot90" = "dragonET.command_line:stack_rot90"
 "dragonET.stack.transform" = "dragonET.command_line:stack_transform"
 
 #
