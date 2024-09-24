@@ -400,7 +400,7 @@ def construct_model(matrix, P0):
     return np.stack([a, b, c, dy, dx], axis=1)
 
 
-def track_first_and_last(projections, data, mask, octave):
+def track_first_and_last(projections, data, mask, octave, rebin_factor):
     """
     Track features across the first and last images if they are around 180 degrees apart
 
@@ -413,12 +413,11 @@ def track_first_and_last(projections, data, mask, octave):
     first_and_last_images = np.zeros((2, projections.shape[1], projections.shape[1]))
     first_and_last_images[0] = projections[0]
     first_and_last_images[1] = np.flip(projections[-1], axis=1)
-    first_and_last_images = rescale(
-        dragonET.command_line._track.rebin_stack(first_and_last_images, 1)
-    )
 
     # Extract the image features
-    features = dragonET.command_line._track.extract_features(first_and_last_images, 8)
+    features = dragonET.command_line._track.extract_features(
+        first_and_last_images, rebin_factor
+    )
 
     # Find matching features and compute initial transform between images
     _, match_list = dragonET.command_line._track.find_matching_features(
@@ -512,7 +511,7 @@ def track_stack(
     # Try to track features across the end of the scan
     if len(P) > 2 and angular_difference_180(P[0, 2], P[-1, 2]) < 10:
         data, mask, octave = track_first_and_last(
-            rebinned_projections, data, mask, octave
+            rebinned_projections, data, mask, octave, rebin_factor
         )
 
     # Recentre the points around the origin. This calculates the optimal matrix
