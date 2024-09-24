@@ -89,7 +89,6 @@ test = [
 "dragonET.project" = "dragonET.command_line:project"
 "dragonET.refine" = "dragonET.command_line:refine"
 "dragonET.reconstruct" = "dragonET.command_line:reconstruct"
-"dragonET.rot90" = "dragonET.command_line:rot90"
 "dragonET.select_sample_axis" = "dragonET.command_line:select_sample_axis"
 "dragonET.track" = "dragonET.command_line:track"
 "dragonET.stack.edit" = "dragonET.command_line:stack_edit"

@@ -49,9 +49,8 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
     parser.add_argument(
         "-o",
         type=str,
-        default="rot90ned.mrc",
+        default="rotated.mrc",
         dest="projections_out",
-        required=False,
         help=(
             """
             The filename for the output projection images
