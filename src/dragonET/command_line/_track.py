@@ -400,14 +400,16 @@ def construct_model(matrix, P0):
     return np.stack([a, b, c, dy, dx], axis=1)
 
 
-def track_first_and_last(projections, data, mask, octave, rebin_factor):
+def track_first_and_last(projections, data, mask, octave, rebin_factor, min_samples):
     """
     Track features across the first and last images if they are around 180 degrees apart
 
     """
-
     # Function to flip coordinates
     flip_coordinate = lambda x: np.array((image_size[1] - x[0], x[1]))
+
+    # Get the image size
+    image_size = projections.shape[1:]
 
     # Get the first image and flipped last image
     first_and_last_images = np.zeros((2, projections.shape[1], projections.shape[1]))
@@ -415,43 +417,38 @@ def track_first_and_last(projections, data, mask, octave, rebin_factor):
     first_and_last_images[1] = np.flip(projections[-1], axis=1)
 
     # Extract the image features
-    features = dragonET.command_line._track.extract_features(
-        first_and_last_images, rebin_factor
-    )
+    features = extract_features(first_and_last_images, rebin_factor)
 
     # Find matching features and compute initial transform between images
-    _, match_list = dragonET.command_line._track.find_matching_features(
-        first_and_last_images, features, min_samples
-    )
+    _, match_list = find_matching_features(first_and_last_images, features, min_samples)
 
     # Creat th new data matrix
-    data2, mask2, octave2 = dragonET.command_line._track.construct_data_matrix(
-        features, match_list
-    )
+    data2, mask2, octave2 = construct_data_matrix(features, match_list)
 
     # Loop through all the found features
     for j in range(data2.shape[1]):
         # Get the coordinates on the first and last images
-        x0 = data2[0, j]
-        x1 = flip_coordinate(data2[1, j])
+        x_0 = data2[0, j]
+        x_n = flip_coordinate(data2[1, j])
 
         # Compute the distance from the current point to each point on the
         # first and last images in the data matrix
-        d_0 = np.sqrt(np.sum((x0[None, :] - data[0, :, :]) ** 2, axis=1))
-        d_n = np.sqrt(np.sum((x1[None, :] - data[-1, :, :]) ** 2, axis=1))
+        d_0 = np.sqrt(np.sum((x_0[None, :] - data[0, :, :]) ** 2, axis=1))
+        d_n = np.sqrt(np.sum((x_n[None, :] - data[-1, :, :]) ** 2, axis=1))
 
         # Select the points on the first and last images closest to the current point
-        select_0 = mask[0, :] & (d_0 < 1) & (octave == octave2[j])
-        select_n = mask[-1, :] & (d_n < 1) & (octave == octave2[j])
+        octave_mask = octave == octave2[j]
+        select_0 = mask[0, :] & octave_mask & (d_0 < 1)
+        select_n = mask[-1, :] & octave_mask & (d_n < 1)
         index_0 = np.where(select_0)[0][:1]
         index_n = np.where(select_n)[0][:1]
 
         # Assign the point on the last image
-        data[-1, index_0] = x1
+        data[-1, index_0] = x_n
         mask[-1, index_0] = 1
 
         # Assign the point on the first image
-        data[0, index_n] = x0
+        data[0, index_n] = x_0
         mask[0, index_n] = 1
 
     # Count how many we have set
@@ -511,7 +508,7 @@ def track_stack(
     # Try to track features across the end of the scan
     if len(P) > 2 and angular_difference_180(P[0, 2], P[-1, 2]) < 10:
         data, mask, octave = track_first_and_last(
-            rebinned_projections, data, mask, octave, rebin_factor
+            rebinned_projections, data, mask, octave, rebin_factor, min_samples
         )
 
     # Recentre the points around the origin. This calculates the optimal matrix
