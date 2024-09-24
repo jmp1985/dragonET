@@ -196,7 +196,7 @@ def residuals(parameters, active, W, M):
     r = np.array(r)
 
     print(
-        "First image: dx=%.1f, dy=%.1f, a= %.1f, b=%.1f, c=%.1f; RMSD: %.3f"
+        "First image: dx=%.1f, dy=%.1f, a= %.1f, b=%.1f, c=%.1f; RMSD: %.3f; Centering: %.3f"
         % (
             dx[0],
             dy[0],
@@ -204,6 +204,7 @@ def residuals(parameters, active, W, M):
             np.degrees(b[0]),
             np.degrees(c[0]),
             np.sqrt(np.mean(r**2)),
+            np.sqrt(np.mean((C / num_points) ** 2)),
         )
     )
 
@@ -582,8 +583,6 @@ def refine_model(
         idx = np.argmin(np.abs(parameters[4, :]))
         active[3, idx] = 0
         active[4, idx] = 0
-        pylab.imshow(active)
-        pylab.show()
 
         # Return the parameters
         return parameters[active].flatten(), (parameters, active, W, M)
@@ -825,6 +824,11 @@ def _refine(
     num_images = data.shape[0]
     num_points = data.shape[1]
 
+    # Select only points with 3 or more points
+    select = np.count_nonzero(mask, axis=0) >= 3
+    data = data[:, select]
+    mask = mask[:, select]
+
     # Perform some checks on the contours
     check_obs_per_image(mask)
     check_obs_per_point(mask)
@@ -832,10 +836,6 @@ def _refine(
     print("Num images: %d" % num_images)
     print("Num contours: %d" % num_points)
     print("Num observations: %d" % np.count_nonzero(mask))
-
-    select = np.count_nonzero(mask, axis=0) >= 3
-    data = data[:, select]
-    mask = mask[:, select]
 
     # Run through the cycles of refinement
     for restrain in get_cycles(fix):
