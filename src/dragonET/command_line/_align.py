@@ -451,6 +451,9 @@ def _align(
     # Read the projections
     projections = read_projections(projections_in)
 
+    # Get the image size
+    image_size = np.array(projections.shape[1:])
+
     # Read the model
     model = read_model(model_in)
 
@@ -462,14 +465,17 @@ def _align(
         print("- Warning pitch is not zero in initial model but will be ignored.")
 
     # Align the stack
-    P[:, 3:5] = -align_stack(
-        projections,
-        P[:, 2],
-        -P[:, 3:5],
-        max_shift,
-        max_iter,
-        max_images,
-        device,
+    P[:, 3:5] = (
+        -align_stack(
+            projections,
+            P[:, 2],
+            -P[:, 3:5],
+            max_shift,
+            max_iter,
+            max_images,
+            device,
+        )
+        / image_size[None, :]
     )
 
     # Update the model and convert back to degrees

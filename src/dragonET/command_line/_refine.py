@@ -803,21 +803,21 @@ def _refine(
     # Read the model
     model = read_model(model_in)
 
+    # Get the image size
+    image_size = np.array(model["image_size"])
+    # image_size = np.array([1, 1])
+
     # Read the points
     data, mask = read_points(contours)
-
-    # The image size
-    image_size = model["image_size"]
+    data = data * image_size[None, None, ::-1]  # Scale by image size
 
     # Read the initial model add 1/2 image size and convert degrees to radians
     P = np.array(model["transform"], dtype=float)
     a = np.radians(P[:, 0])
     b = np.radians(P[:, 1])
     c = np.radians(P[:, 2])
-    dy = P[:, 3]
-    dx = P[:, 4]
-    dy += image_size[0] // 2
-    dx += image_size[1] // 2
+    dy = (P[:, 3] + 0.5) * image_size[0]  # Scale by image size
+    dx = (P[:, 4] + 0.5) * image_size[1]  # Scale by image size
 
     # The number of images and points
     assert data.shape[0] == P.shape[0]
@@ -844,8 +844,8 @@ def _refine(
         )
 
     # Update the model, remove 1/2 image size and convert back to degrees
-    dy -= image_size[0] // 2
-    dx -= image_size[1] // 2
+    dy = (dy / image_size[0]) - 0.5
+    dx = (dx / image_size[1]) - 0.5
     P = np.stack([np.degrees(a), np.degrees(b), np.degrees(c), dy, dx], axis=1)
     model["transform"] = P.tolist()
 

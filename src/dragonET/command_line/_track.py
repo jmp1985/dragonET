@@ -155,6 +155,9 @@ def extract_features(projections, rebin_factor):
     # Get the rebin factor octave
     rebin_factor_octave = np.log2(rebin_factor).astype(int)
 
+    # Get the image size
+    image_size = np.array(projections.shape[1:])
+
     # Initialise the SIFT algorithm
     descriptor_extractor = SIFT(
         upsampling=1,
@@ -183,7 +186,8 @@ def extract_features(projections, rebin_factor):
         # keep track of if everything is consistent.
         features.append(
             {
-                "keypoints": descriptor_extractor.positions[:, ::-1],  # * rebin_factor,
+                "keypoints": descriptor_extractor.positions[:, ::-1]
+                / image_size[None, ::-1],
                 "descriptors": descriptor_extractor.descriptors,
                 "octaves": descriptor_extractor.octaves,  # + rebin_factor_octave,
                 "scales": descriptor_extractor.scales,  # + rebin_factor_octave,
@@ -256,7 +260,7 @@ def find_matching_features(projections, features, min_samples=4):
                 (positions_i, positions_j),
                 EuclideanTransform,
                 min_samples=min_samples,
-                residual_threshold=5,
+                residual_threshold=0.01,
                 max_trials=1000,
             )
 
@@ -406,10 +410,7 @@ def track_first_and_last(projections, data, mask, octave, rebin_factor, min_samp
 
     """
     # Function to flip coordinates
-    flip_coordinate = lambda x: np.array((image_size[1] - x[0], x[1]))
-
-    # Get the image size
-    image_size = projections.shape[1:]
+    flip_coordinate = lambda x: np.array((1 - x[0], x[1]))
 
     # Get the first image and flipped last image
     first_and_last_images = np.zeros((2, projections.shape[1], projections.shape[1]))
@@ -464,7 +465,7 @@ def track_first_and_last(projections, data, mask, octave, rebin_factor, min_samp
 def track_stack(
     projections,
     P,
-    rebin_factor=1,
+    rebin_factor=8,
     min_samples=4,
 ):
     """
@@ -513,8 +514,7 @@ def track_stack(
 
     # Recentre the points around the origin. This calculates the optimal matrix
     # that puts the points around the origin on each image.
-    origin = np.array(rebinned_projections.shape[1:]) / 2
-    matrix = recentre_points(data, mask, matrix, origin=origin)
+    matrix = recentre_points(data, mask, matrix, origin=(0.5, 0.5))
 
     # Construct the model parameters
     P = construct_model(matrix, P)

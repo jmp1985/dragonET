@@ -208,7 +208,7 @@ def _prepare_astra_geometry(
         U = matrix_to_rotate_a_onto_b(axis, np.array((0, 0, 1)))
         return U, -axis_origin
 
-    print("Preparing geometry with pixel size %f" % pixel_size)
+    # print("Preparing geometry with pixel size %f" % pixel_size)
     assert all(np.array(image_size) > 0)
 
     # Prepare the transform to align the sample. The origin is wrt the centre
@@ -221,8 +221,8 @@ def _prepare_astra_geometry(
     a = np.radians(P[:, 0])  # Yaw
     b = np.radians(P[:, 1])  # Pitch
     c = np.radians(P[:, 2])  # Roll
-    shifty = P[:, 3]  # Shift Y
-    shiftx = P[:, 4]  # Shift X
+    shifty = P[:, 3] * image_size[0]  # Shift Y
+    shiftx = P[:, 4] * image_size[1]  # Shift X
 
     # Create the rotation matrix for each image
     Ra = Rotation.from_euler("z", a).as_matrix()
@@ -319,7 +319,7 @@ def _reconstruct_with_astra(
     algorithm_id = astra.algorithm.create(alg_cfg)
 
     # Do the reconstruction
-    print("Reconstructing with %d iterations" % num_iterations)
+    # print("Reconstructing with %d iterations" % num_iterations)
     astra.algorithm.run(algorithm_id, iterations=num_iterations)
 
     # Get the reconstructed volume
