@@ -235,8 +235,6 @@ def penalties(parameters, active, W, M):
     # For c to vary smoothly
     return np.concatenate(
         [
-            # [100*np.degrees(b[45])] if "b" in refine else [],
-            # 0.0*np.degrees(b) if "b" in refine else [],
             np.degrees(a[:-2] - 2 * a[1:-1] + a[2:]) if "a" in refine else [],
             np.degrees(b[:-2] - 2 * b[1:-1] + b[2:]) if "b" in refine else [],
             np.degrees(c[:-2] - 2 * c[1:-1] + c[2:]) if "c" in refine else [],
@@ -483,6 +481,12 @@ def jacobian_penalties(parameters, active, W, M):
 
     dx, dy, a, b, c = parameters
 
+    # Indices
+    a0 = dy.shape[0] + dx.shape[0]
+    a1 = b0 = a0 + a.shape[0]
+    b1 = c0 = b0 + b.shape[0]
+    c1 = c0 + c.shape[0]
+
     refine = "a"
     if np.count_nonzero(active[3, :]) > 0:
         refine += "b"
@@ -490,27 +494,17 @@ def jacobian_penalties(parameters, active, W, M):
         refine += "c"
     if refine == "a":
         active = active[0:3, :]
+        num_params = a1
     elif refine == "ab":
         active = active[0:4, :]
-
-    # Indices
-    a0 = dy.shape[0] + dx.shape[0]
-    a1 = b0 = a0 + a.shape[0]
-    b1 = c0 = b0 + b.shape[0]
-    c1 = c0 + c.shape[0]
-
-    # Get the number of parameters
-    num_params = {None: c1, "c": b1, "bc": a1}[restrain]
+        num_params = b1
+    else:
+        num_params = c1
 
     # Derivative of angle w.r.t angle
     da_da = np.identity(a.shape[0])
     db_db = np.identity(b.shape[0])
     dc_dc = np.identity(c.shape[0])
-
-    def db_dp():
-        J = np.zeros((db_db.shape[0], num_params))
-        J[:, b0:b1] = db_db
-        return J
 
     def dfa_dp():
         J = np.zeros((da_da.shape[0] - 2, num_params))
@@ -535,8 +529,6 @@ def jacobian_penalties(parameters, active, W, M):
     J = np.concatenate(
         not_none(
             [
-                # 100 * np.degrees(db0_dp) if "b" in refine else None,
-                # 0.0*np.degrees(db_dp()) if "b" in refine else None,
                 np.degrees(dfa_dp()) if "a" in refine else None,
                 np.degrees(dfb_dp()) if "b" in refine else None,
                 np.degrees(dfc_dp()) if "c" in refine else None,

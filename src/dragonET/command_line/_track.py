@@ -260,7 +260,7 @@ def find_matching_features(projections, features, min_samples=4):
                 (positions_i, positions_j),
                 EuclideanTransform,
                 min_samples=min_samples,
-                residual_threshold=0.01,
+                residual_threshold=0.009765625,  # 0.01,
                 max_trials=1000,
             )
 
