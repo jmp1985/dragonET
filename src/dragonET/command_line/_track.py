@@ -13,9 +13,10 @@ from typing import List
 import mrcfile
 import numpy as np
 import yaml
-from matplotlib import pylab
+
+# from matplotlib import pylab
 from scipy.spatial.transform import Rotation
-from skimage.feature import SIFT, match_descriptors, plot_matches
+from skimage.feature import SIFT, match_descriptors  # , plot_matches
 from skimage.measure import ransac
 from skimage.transform import EuclideanTransform
 
@@ -161,11 +162,11 @@ def extract_features(projections, rebin_factor):
         # c_edge=100000000000,
         # n_scales=1,
         # n_octaves=1,
-        # c_dog=0.001,
+        # c_dog=0.1,
         n_scales=32,
         n_octaves=32,
-        n_hist=16,
-        n_ori=16,
+        n_hist=32,
+        n_ori=32,
     )
 
     # Initialise the feature lookup
@@ -185,6 +186,7 @@ def extract_features(projections, rebin_factor):
                 "keypoints": descriptor_extractor.positions[:, ::-1],  # * rebin_factor,
                 "descriptors": descriptor_extractor.descriptors,
                 "octaves": descriptor_extractor.octaves,  # + rebin_factor_octave,
+                "scales": descriptor_extractor.scales,  # + rebin_factor_octave,
                 "orientations": descriptor_extractor.orientations,
             }
         )
@@ -239,36 +241,13 @@ def find_matching_features(projections, features, min_samples=4):
         # Select only those with matching orientations
         matches = matches[select_orientation, :]
 
-        # fig, ax = pylab.subplots()
-        # plot_matches(
-        #     ax,
-        #     projections[i],
-        #     projections[j],
-        #     features[i]["keypoints"][:, ::-1],
-        #     features[j]["keypoints"][:, ::-1],
-        #     matches,
-        # )
-        # pylab.show()
-
         # Get the positions
         positions_i, positions_j = (
             features[i]["keypoints"][matches[:, 0]],
             features[j]["keypoints"][matches[:, 1]],
         )
-        # if j > 89:
-        #     fig, ax = pylab.subplots()
-        #     plot_matches(
-        #         ax,
-        #         projections[i],
-        #         projections[j],
-        #         features[i]["keypoints"][:, ::-1],
-        #         features[j]["keypoints"][:, ::-1],
-        #         matches,
-        #     )
-        #     pylab.show()
 
         # Only bother if we have enough samples
-        # print(len(positions_i))
         try:
             assert len(positions_i) >= min_samples
 
@@ -421,10 +400,75 @@ def construct_model(matrix, P0):
     return np.stack([a, b, c, dy, dx], axis=1)
 
 
+def track_first_and_last(projections, data, mask, octave):
+    """
+    Track features across the first and last images if they are around 180 degrees apart
+
+    """
+
+    # Function to flip coordinates
+    flip_coordinate = lambda x: np.array((image_size[1] - x[0], x[1]))
+
+    # Get the first image and flipped last image
+    first_and_last_images = np.zeros((2, projections.shape[1], projections.shape[1]))
+    first_and_last_images[0] = projections[0]
+    first_and_last_images[1] = np.flip(projections[-1], axis=1)
+    first_and_last_images = rescale(
+        dragonET.command_line._track.rebin_stack(first_and_last_images, 1)
+    )
+
+    # Extract the image features
+    features = dragonET.command_line._track.extract_features(first_and_last_images, 8)
+
+    # Find matching features and compute initial transform between images
+    _, match_list = dragonET.command_line._track.find_matching_features(
+        first_and_last_images, features, min_samples
+    )
+
+    # Creat th new data matrix
+    data2, mask2, octave2 = dragonET.command_line._track.construct_data_matrix(
+        features, match_list
+    )
+
+    # Loop through all the found features
+    for j in range(data2.shape[1]):
+        # Get the coordinates on the first and last images
+        x0 = data2[0, j]
+        x1 = flip_coordinate(data2[1, j])
+
+        # Compute the distance from the current point to each point on the
+        # first and last images in the data matrix
+        d_0 = np.sqrt(np.sum((x0[None, :] - data[0, :, :]) ** 2, axis=1))
+        d_n = np.sqrt(np.sum((x1[None, :] - data[-1, :, :]) ** 2, axis=1))
+
+        # Select the points on the first and last images closest to the current point
+        select_0 = mask[0, :] & (d_0 < 1) & (octave == octave2[j])
+        select_n = mask[-1, :] & (d_n < 1) & (octave == octave2[j])
+        index_0 = np.where(select_0)[0][:1]
+        index_n = np.where(select_n)[0][:1]
+
+        # Assign the point on the last image
+        data[-1, index_0] = x1
+        mask[-1, index_0] = 1
+
+        # Assign the point on the first image
+        data[0, index_n] = x0
+        mask[0, index_n] = 1
+
+    # Count how many we have set
+    print(
+        "Matched %d features on first and last image"
+        % (np.count_nonzero(mask[0, :] & mask[-1, :]))
+    )
+
+    # Return the data matrix, mask and octave data
+    return data, mask, octave
+
+
 def track_stack(
     projections,
     P,
-    rebin_factor=8,
+    rebin_factor=1,
     min_samples=4,
 ):
     """
@@ -436,6 +480,11 @@ def track_stack(
         s1 = 1 / (np.max(a) - np.min(a))
         s0 = -s1 * a.min()
         return s0 + s1 * a
+
+    def angular_difference_180(a, b):
+        return np.abs(
+            np.degrees(np.arccos(np.cos(np.radians(a) - np.radians(b)))) - 180
+        )
 
     # Rebin the projections to a smaller size. We do this for two reasons.
     # First of all, the SIFT algorithm picks out too much noise if we do at at
@@ -459,6 +508,12 @@ def track_stack(
     # point has been measured on that frame. This is a more convenient
     # representation for performing the refinement.
     data, mask, octave = construct_data_matrix(features, match_list)
+
+    # Try to track features across the end of the scan
+    if len(P) > 2 and angular_difference_180(P[0, 2], P[-1, 2]) < 10:
+        data, mask, octave = track_first_and_last(
+            rebinned_projections, data, mask, octave
+        )
 
     # Recentre the points around the origin. This calculates the optimal matrix
     # that puts the points around the origin on each image.
@@ -519,6 +574,8 @@ def _track(
 
     # Write the model to file
     write_model(model, model_out)
+
+    # Write the contours to file
     write_contours(contours_out, data, mask, octave)
 
 
