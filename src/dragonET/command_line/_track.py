@@ -383,7 +383,7 @@ def recentre_points(data, mask, matrix, origin=(0, 0)):
 
 def construct_model(matrix, P0):
     # Get the initial angle
-    a = np.radians(P0[0, 0])
+    a = np.radians(P0[0, 2])
 
     # Create the rotation matrix
     R = Rotation.from_euler("z", a).as_matrix()
@@ -397,11 +397,11 @@ def construct_model(matrix, P0):
 
     # Get the rotation component
     a = np.degrees(np.arctan2(matrix[:, 1, 0], matrix[:, 0, 0]))
-    b = P0[:, 1]
-    c = P0[:, 2]
+    b = P0[:, 3]
+    c = P0[:, 4]
 
     # Return the model
-    return np.stack([a, b, c, dy, dx], axis=1)
+    return np.stack([dx, dy, a, b, c], axis=1)
 
 
 def track_first_and_last(projections, data, mask, octave, rebin_factor, min_samples):
@@ -411,6 +411,9 @@ def track_first_and_last(projections, data, mask, octave, rebin_factor, min_samp
     """
     # Function to flip coordinates
     flip_coordinate = lambda x: np.array((1 - x[0], x[1]))
+
+    # Get the image size (reversed to be X, Y)
+    image_size = np.array(projections.shape[1:])[None, ::-1]
 
     # Get the first image and flipped last image
     first_and_last_images = np.zeros((2, projections.shape[1], projections.shape[1]))
@@ -433,14 +436,19 @@ def track_first_and_last(projections, data, mask, octave, rebin_factor, min_samp
         x_n = flip_coordinate(data2[1, j])
 
         # Compute the distance from the current point to each point on the
-        # first and last images in the data matrix
-        d_0 = np.sqrt(np.sum((x_0[None, :] - data[0, :, :]) ** 2, axis=1))
-        d_n = np.sqrt(np.sum((x_n[None, :] - data[-1, :, :]) ** 2, axis=1))
+        # first and last images in the data matrix. We scale by the image size
+        # because we want to match the points as being closer than 1 pixel
+        d_0 = np.sqrt(
+            np.sum(((x_0[None, :] - data[0, :, :]) * image_size) ** 2, axis=1)
+        )
+        d_n = np.sqrt(
+            np.sum(((x_n[None, :] - data[-1, :, :]) * image_size) ** 2, axis=1)
+        )
 
         # Select the points on the first and last images closest to the current point
         octave_mask = octave == octave2[j]
-        select_0 = mask[0, :] & octave_mask & (d_0 < 1)
-        select_n = mask[-1, :] & octave_mask & (d_n < 1)
+        select_0 = mask[0, :] & octave_mask & (d_0 < 1)  # Closer than 1 pixel
+        select_n = mask[-1, :] & octave_mask & (d_n < 1)  # Closer than 1 pixel
         index_0 = np.where(select_0)[0][:1]
         index_n = np.where(select_n)[0][:1]
 
@@ -507,7 +515,7 @@ def track_stack(
     data, mask, octave = construct_data_matrix(features, match_list)
 
     # Try to track features across the end of the scan
-    if len(P) > 2 and angular_difference_180(P[0, 2], P[-1, 2]) < 10:
+    if len(P) > 2 and angular_difference_180(P[0, 4], P[-1, 4]) < 10:
         data, mask, octave = track_first_and_last(
             rebinned_projections, data, mask, octave, rebin_factor, min_samples
         )

@@ -146,11 +146,11 @@ def _stack_transform(
         oy, ox = np.array(image_size) / 2
 
         # Get the components
-        a = np.radians(P[:, 0])
-        b = np.radians(P[:, 1])
-        c = np.radians(P[:, 2])
-        dy = P[:, 3] * image_size[0]
-        dx = P[:, 4] * image_size[1]
+        dx = P[:, 0] * image_size[1]
+        dy = P[:, 1] * image_size[0]
+        a = np.radians(P[:, 2])
+        b = np.radians(P[:, 3])
+        c = np.radians(P[:, 4])
 
         # Only use in plane rotation and translation
         matrix = Rotation.from_euler("z", a).as_matrix()

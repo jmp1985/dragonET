@@ -465,11 +465,11 @@ def _align(
         print("- Warning pitch is not zero in initial model but will be ignored.")
 
     # Align the stack
-    P[:, 3:5] = (
+    P[:, 0:2] = (
         -align_stack(
             projections,
-            P[:, 2],
-            -P[:, 3:5],
+            P[:, 4],
+            -P[:, 0:2],
             max_shift,
             max_iter,
             max_images,

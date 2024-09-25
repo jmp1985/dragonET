@@ -188,11 +188,11 @@ def _prepare_astra_geometry(
     Rs, Ts = prepare_sample_alignment_rotation_and_translation(axis, axis_origin)
 
     # The transformation
-    a = np.radians(P[:, 0])  # Yaw
-    b = np.radians(P[:, 1])  # Pitch
-    c = np.radians(P[:, 2])  # Roll
-    shifty = P[:, 3] * image_size[0]  # Shift Y
-    shiftx = P[:, 4] * image_size[1]  # Shift X
+    shiftx = P[:, 0] * image_size[1]  # Shift X
+    shifty = P[:, 1] * image_size[0]  # Shift Y
+    a = np.radians(P[:, 2])  # Yaw
+    b = np.radians(P[:, 3])  # Pitch
+    c = np.radians(P[:, 4])  # Roll
 
     # Create the rotation matrix for each image
     Ra = Rotation.from_euler("z", a).as_matrix()

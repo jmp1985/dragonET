@@ -127,16 +127,16 @@ def get_matrix_from_parameters(P):
     """
 
     # Create the rotation matrix for each image
-    a = np.radians(P[:, 0])  # Yaw
-    b = np.radians(P[:, 1])  # Pitch
-    c = np.radians(P[:, 2])  # Roll
+    a = np.radians(P[:, 2])  # Yaw
+    b = np.radians(P[:, 3])  # Pitch
+    c = np.radians(P[:, 4])  # Roll
     Rabc = Rotation.from_euler("yxz", np.stack([c, b, a]).T).as_matrix()
 
     # Construct the matrix from the parameters
     R = np.full((P.shape[0], 4, 4), np.eye(4))
     R[:, :3, :3] = Rabc
-    R[:, 0, 3] = P[:, 4]  # Shift X
-    R[:, 1, 3] = P[:, 3]  # Shift Y
+    R[:, 0, 3] = P[:, 0]  # Shift X
+    R[:, 1, 3] = P[:, 1]  # Shift Y
     return R
 
 
@@ -147,11 +147,11 @@ def get_parameters_from_matrix(R):
     """
     euler = Rotation.from_matrix(R[:, :3, :3]).as_euler("yxz")
     P = np.zeros((R.shape[0], 5))
-    P[:, 0] = np.degrees(euler[:, 2])
-    P[:, 1] = np.degrees(euler[:, 1])
-    P[:, 2] = np.degrees(euler[:, 0])
-    P[:, 3] = R[:, 1, 3]
-    P[:, 4] = R[:, 0, 3]
+    P[:, 0] = R[:, 0, 3]
+    P[:, 1] = R[:, 1, 3]
+    P[:, 2] = np.degrees(euler[:, 2])
+    P[:, 3] = np.degrees(euler[:, 1])
+    P[:, 4] = np.degrees(euler[:, 0])
     return P
 
 

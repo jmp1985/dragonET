@@ -149,16 +149,16 @@ def _new(
     image_size = projections_file.data.shape[1:]
 
     # Construct the transform
-    transform = np.zeros((angles.size, 5))
-    transform[:, 0] = global_rotation
-    transform[:, 2] = angles
+    P = np.zeros((angles.size, 5))
+    P[:, 2] = global_rotation
+    P[:, 4] = angles
 
     # Construct the model dictionary
     model = {
         "axis_origin": (0, 0, 0),
         "axis": (1, 0, 0),
         "image_size": image_size,
-        "transform": transform.tolist(),
+        "transform": P.tolist(),
     }
 
     # Write the model

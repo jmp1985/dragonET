@@ -196,7 +196,7 @@ def residuals(parameters, active, W, M):
     r = np.array(r)
 
     print(
-        "First image: dx=%.1f, dy=%.1f, a= %.1f, b=%.1f, c=%.1f; RMSD: %.3f; Centering: %.3f"
+        "First image: dx=%.4g, dy=%.4g, a=%.4g, b=%.4g, c=%.4g; RMSD=%.4g; Centering=%.4g"
         % (
             dx[0],
             dy[0],
@@ -795,7 +795,8 @@ def _refine(
     # Read the model
     model = read_model(model_in)
 
-    # Get the image size
+    # Get the image size. We scale the translations because it is easier to
+    # understand the RMSD in terms of pixels than normalised coordinates
     image_size = np.array(model["image_size"])
     # image_size = np.array([1, 1])
 
@@ -805,11 +806,11 @@ def _refine(
 
     # Read the initial model add 1/2 image size and convert degrees to radians
     P = np.array(model["transform"], dtype=float)
-    a = np.radians(P[:, 0])
-    b = np.radians(P[:, 1])
-    c = np.radians(P[:, 2])
-    dy = (P[:, 3] + 0.5) * image_size[0]  # Scale by image size
-    dx = (P[:, 4] + 0.5) * image_size[1]  # Scale by image size
+    dx = (P[:, 0] + 0.5) * image_size[1]  # Scale by image size
+    dy = (P[:, 1] + 0.5) * image_size[0]  # Scale by image size
+    a = np.radians(P[:, 2])
+    b = np.radians(P[:, 3])
+    c = np.radians(P[:, 4])
 
     # The number of images and points
     assert data.shape[0] == P.shape[0]
@@ -836,9 +837,9 @@ def _refine(
         )
 
     # Update the model, remove 1/2 image size and convert back to degrees
-    dy = (dy / image_size[0]) - 0.5
     dx = (dx / image_size[1]) - 0.5
-    P = np.stack([np.degrees(a), np.degrees(b), np.degrees(c), dy, dx], axis=1)
+    dy = (dy / image_size[0]) - 0.5
+    P = np.stack([dx, dy, np.degrees(a), np.degrees(b), np.degrees(c)], axis=1)
     model["transform"] = P.tolist()
 
     # Save the refined model

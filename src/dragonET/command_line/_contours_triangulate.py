@@ -172,11 +172,11 @@ def _contours_triangulate(
     data, mask, octave = read_points(contours_in)
 
     # Get the parameters
-    a = np.radians(P[:, 0])
-    b = np.radians(P[:, 1])
-    c = np.radians(P[:, 2])
-    dy = P[:, 3] + 0.5
-    dx = P[:, 4] + 0.5
+    dx = P[:, 0] + 0.5
+    dy = P[:, 1] + 0.5
+    a = np.radians(P[:, 2])
+    b = np.radians(P[:, 3])
+    c = np.radians(P[:, 4])
 
     # Triangulate the points
     points = triangulate(dx, dy, a, b, c, data, mask)

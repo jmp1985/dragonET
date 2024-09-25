@@ -5,7 +5,6 @@
 #
 # Author: James Parkhurst
 #
-import itertools
 import time
 from argparse import ArgumentParser
 from typing import List
@@ -165,7 +164,7 @@ def _pick(
             P = np.array(model["transform"])
             assert P.shape[0] == transform.shape[0]
             for i in range(P.shape[0]):
-                theta = np.radians(P[i, 0])
+                theta = np.radians(P[i, 2])
 
                 O = np.array(
                     [
@@ -177,7 +176,7 @@ def _pick(
                 )
 
                 T = np.array(
-                    [[1, 0, 0, 0], [0, 1, 0, P[i, 3]], [0, 0, 1, P[i, 4]], [0, 0, 0, 1]]
+                    [[1, 0, 0, 0], [0, 1, 0, P[i, 1]], [0, 0, 1, P[i, 0]], [0, 0, 0, 1]]
                 )
 
                 R = np.array(

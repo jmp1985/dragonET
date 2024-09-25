@@ -187,11 +187,11 @@ def extend_contours_for_image(
     select = np.count_nonzero(mask, axis=0) > 0
 
     # Predict the feature on the image
-    a = np.radians(P_image[0])
-    b = np.radians(P_image[1])
-    c = np.radians(P_image[2])
-    dy = P_image[3] + stack.shape[1] // 2
-    dx = P_image[4] + stack.shape[2] // 2
+    dx = P_image[0] + stack.shape[2] // 2
+    dy = P_image[1] + stack.shape[1] // 2
+    a = np.radians(P_image[2])
+    b = np.radians(P_image[3])
+    c = np.radians(P_image[4])
 
     # Get the rotation matrices
     Rabc = Rotation.from_euler("yxz", np.stack([c, b, a])).as_matrix()
@@ -272,11 +272,11 @@ def extend_contours_internal(projections, P, data, mask, octave, subset_size: in
     assert subset_size >= 1
 
     # Get the parameters
-    a = np.radians(P[:, 0])
-    b = np.radians(P[:, 1])
-    c = np.radians(P[:, 2])
-    dy = P[:, 3] + projections.shape[1] // 2
-    dx = P[:, 4] + projections.shape[2] // 2
+    dx = P[:, 0] + projections.shape[2] // 2
+    dy = P[:, 1] + projections.shape[1] // 2
+    a = np.radians(P[:, 2])
+    b = np.radians(P[:, 3])
+    c = np.radians(P[:, 4])
 
     # Triangulate the 3D points
     points = dragonET.command_line._contours_triangulate.triangulate(
