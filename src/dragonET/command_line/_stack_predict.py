@@ -182,6 +182,7 @@ def predict_image(data: np.ndarray, P_data: np.ndarray, P_image: np.ndarray):
 
     # Compute the height of the volume to reconstruct
     height = int(np.ceil(np.max(data.shape[1:]) * np.max(np.abs(np.sin(diff_angle)))))
+    #    height = min(height, 10)
 
     # Init the volume
     shape = (data.shape[1], height, data.shape[2])
@@ -208,18 +209,15 @@ def predict_stack(data: np.ndarray, P: np.ndarray, subset_size: int) -> np.ndarr
     assert subset_size >= 1
 
     # Initialise the result. We have 2 predictions per image
-    result = np.zeros(
-        (2, data.shape[0], data.shape[1], data.shape[2]), dtype=data.dtype
-    )
+    result = np.zeros_like(data)
 
     # Do the prediction for each image
     for j in range(data.shape[0]):
-        for k, (i0, i1) in enumerate(
-            [(j - subset_size, j), (j + 1, j + 1 + subset_size)]
-        ):
-            if i0 >= 0 and i1 <= data.shape[0]:
-                print("Predicting image %d from images %d to %d" % (j, i0, i1))
-                result[k, j] = predict_image(data[i0:i1], P[i0:i1], P[j])
+        i0 = np.clip(j - subset_size, 0, data.shape[0])
+        i1 = np.clip(j + subset_size + 1, 0, data.shape[0])
+        select = np.concatenate([np.arange(i0, j), np.arange(j + 1, i1)])
+        print("Predicting image %d from images %d to %d" % (j, i0, i1))
+        result[j] = predict_image(data[select], P[select], P[j])
 
     # Return the result
     return result
