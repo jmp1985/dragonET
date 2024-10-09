@@ -83,6 +83,13 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         help="Fix parameters in refinement",
     )
     parser.add_argument(
+        "--max_iter",
+        type=int,
+        default=100,
+        dest="max_iter",
+        help="The maximum number of iterations to perform",
+    )
+    parser.add_argument(
         "--reference_image",
         type=int,
         default=None,
@@ -143,6 +150,7 @@ def refine_impl(args):
         args.plots_out,
         args.info_out,
         args.fix,
+        args.max_iter,
         args.reference_image,
         args.verbose,
     )
@@ -164,7 +172,6 @@ def residuals(parameters, active, W, M):
     The refinement residuals
 
     """
-
     # Get parameters
     dx, dy, a, b, c = parameters
 
@@ -196,7 +203,7 @@ def residuals(parameters, active, W, M):
     r = np.array(r)
 
     print(
-        "First image: dx=%.4g, dy=%.4g, a=%.4g, b=%.4g, c=%.4g; RMSD=%.4g; Centering=%.4g"
+        "First image: dx=%.5g, dy=%.5g, a=%.5g, b=%.5g, c=%.5g; RMSD=%.5g; Centering=%.5g"
         % (
             dx[0],
             dy[0],
@@ -436,7 +443,9 @@ def jacobian(parameters, active, W, M):
     The Jacobian
 
     """
+    import time
 
+    st = time.time()
     # Check which parameters are to be refined
     refine = "a"
     if np.count_nonzero(active[3, :]) > 0:
@@ -468,6 +477,7 @@ def jacobian(parameters, active, W, M):
     J = np.concatenate(
         [d_dp(dx, dy, a, b, c, W, M) for d_dp in derivatives[refine]], axis=1
     )
+    print("Jacobian Time: ", time.time() - st)
 
     # Take the active derivatives
     return J[:, active.flatten()]
@@ -549,27 +559,35 @@ def refine_model(
     c,
     data,
     mask,
-    restrain=None,
+    active=None,
+    max_iter=100,
 ) -> tuple:
     """
     Estimate the parameters using least squares
 
     """
-    print("Refining model with %s restrained" % str(restrain))
+    if active is None or isinstance(active, str):
+        print("Refining model with %s restrained" % str(active))
+    else:
+        print("Refining model with %d parameters" % np.count_nonzero(active))
 
-    def get_params_and_args(dx, dy, a, b, c, W, M, restrain=None):
+    def get_params_and_args(dx, dy, a, b, c, W, M, active=None):
         # Get the parameters and the active matrix
         parameters = np.stack([dx, dy, a, b, c])
-        active = np.zeros(parameters.shape, dtype=bool)
 
-        # Set the components to be active or not
-        assert restrain in [None, "bc", "c"]
-        if restrain is None:
-            active[:, :] = 1
-        elif restrain == "c":
-            active[:4, :] = 1
-        elif restrain == "bc":
-            active[:3, :] = 1
+        # Set active matrix
+        if active is None or isinstance(active, str):
+            restrain = active
+            active = np.zeros(parameters.shape, dtype=bool)
+
+            # Set the components to be active or not
+            assert restrain in [None, "bc", "c"]
+            if restrain is None:
+                active[:, :] = 1
+            elif restrain == "c":
+                active[:4, :] = 1
+            elif restrain == "bc":
+                active[:3, :] = 1
 
         # Keep b and c fixed for the zero tilt image
         idx = np.argmin(np.abs(parameters[4, :]))
@@ -587,7 +605,7 @@ def refine_model(
         parameters[active] = x
         return tuple(parameters)
 
-    # def get_bounds(dx, dy, a, b, c, restrain):
+    # def get_bounds(dx, dy, a, b, c, active):
 
     #     # The parameter bounds
     #     dx_min = np.full(dx.shape, -np.inf)
@@ -605,13 +623,13 @@ def refine_model(
     #     b_min[45] = -1e-15
     #     b_max[45] = +1e-15
 
-    #     if restrain is None:
+    #     if active is None:
     #         bounds_min = np.concatenate([dx_min, dy_min, a_min, b_min, c_min])
     #         bounds_max = np.concatenate([dx_max, dy_max, a_max, b_max, c_max])
-    #     elif restrain == "c":
+    #     elif active == "c":
     #         bounds_min = np.concatenate([dx_min, dy_min, a_min, b_min])
     #         bounds_max = np.concatenate([dx_max, dy_max, a_max, b_max])
-    #     elif restrain == "bc":
+    #     elif active == "bc":
     #         bounds_min = np.concatenate([dx_min, dy_min, a_min])
     #         bounds_max = np.concatenate([dx_max, dy_max, a_max])
     #     return bounds_min, bounds_max
@@ -634,20 +652,20 @@ def refine_model(
     Wc = np.concatenate([X, Y], axis=0)
 
     # Get the params and arguments
-    params, args = get_params_and_args(dx, dy, a, b, c, Wc, M, restrain)
+    params, args = get_params_and_args(dx, dy, a, b, c, Wc, M, active)
 
     # Get the bounds
-    # bounds = get_bounds(dx, dy, a, b, c, restrain)
+    # bounds = get_bounds(dx, dy, a, b, c, active)
 
     # Perform the least squares minimisation
     result = scipy.optimize.least_squares(
         fun,
         params,
         args=args,
-        jac=jac,
+        # jac=jac,
         loss="linear",
         # bounds=bounds,
-        # max_nfev=1,
+        max_nfev=max_iter,
         # bounds=[np.radians(-180), np.radians(180)],
     )
 
@@ -670,6 +688,7 @@ def _refine(
     plots_out: str = None,
     info_out: str = None,
     fix: str = None,
+    max_iter: int = 100,
     reference_image: int = None,
     verbose: bool = False,
 ):
@@ -831,9 +850,9 @@ def _refine(
     print("Num observations: %d" % np.count_nonzero(mask))
 
     # Run through the cycles of refinement
-    for restrain in get_cycles(fix):
+    for active in get_cycles(fix):
         dx, dy, a, b, c, rmsd = refine_model(
-            dx, dy, a, b, c, data, mask, restrain=restrain
+            dx, dy, a, b, c, data, mask, active=active, max_iter=max_iter
         )
 
     # Update the model, remove 1/2 image size and convert back to degrees
