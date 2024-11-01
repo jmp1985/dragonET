@@ -645,14 +645,12 @@ def refine_model(
 
     def fun(x, *args):
         args = parse_params_and_args(x, *args)
-        #return np.concatenate([residuals(*args)])  # , penalties(*args)])
+        # return np.concatenate([residuals(*args)])  # , penalties(*args)])
         return np.concatenate([residuals(*args), penalties(*args)])
 
     def jac(x, *args):
         args = parse_params_and_args(x, *args)
-        return np.concatenate(
-            [jacobian(*args)
-             , jacobian_penalties(*args)], axis=0)
+        return np.concatenate([jacobian(*args), jacobian_penalties(*args)], axis=0)
 
     # Construct the input
     X = data[:, :, 0]
@@ -863,7 +861,16 @@ def _refine(
     # Run through the cycles of refinement
     for active in get_cycles(fix):
         dx, dy, a, b, c, rmsd = refine_model(
-            dx, dy, a, b, c, data, mask, active=active, max_iter=max_iter, smoothness=smoothness
+            dx,
+            dy,
+            a,
+            b,
+            c,
+            data,
+            mask,
+            active=active,
+            max_iter=max_iter,
+            smoothness=smoothness,
         )
 
     # Update the model, remove 1/2 image size and convert back to degrees
