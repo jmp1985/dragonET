@@ -90,6 +90,13 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         help="The maximum number of iterations to perform",
     )
     parser.add_argument(
+        "--smoothness",
+        type=float,
+        default=10,
+        dest="smoothness",
+        help="The smoothness regularisation parameter for angle refinement",
+    )
+    parser.add_argument(
         "--reference_image",
         type=int,
         default=None,
@@ -151,6 +158,7 @@ def refine_impl(args):
         args.info_out,
         args.fix,
         args.max_iter,
+        args.smoothness,
         args.reference_image,
         args.verbose,
     )
@@ -167,7 +175,7 @@ def refine(args: List[str] = None):
     refine_impl(get_parser().parse_args(args=args))
 
 
-def residuals(parameters, active, W, M):
+def residuals(parameters, active, W, M, smoothness):
     """
     The refinement residuals
 
@@ -222,7 +230,7 @@ def residuals(parameters, active, W, M):
     return r
 
 
-def penalties(parameters, active, W, M):
+def penalties(parameters, active, W, M, smoothness):
     """
     Penalty functions
 
@@ -240,7 +248,7 @@ def penalties(parameters, active, W, M):
     # For a to vary smoothly
     # For b to vary smoothly
     # For c to vary smoothly
-    return np.concatenate(
+    return smoothness * np.concatenate(
         [
             np.degrees(a[:-2] - 2 * a[1:-1] + a[2:]) if "a" in refine else [],
             np.degrees(b[:-2] - 2 * b[1:-1] + b[2:]) if "b" in refine else [],
@@ -438,7 +446,7 @@ def d_dc(dx, dy, a, b, c, W, M):
     return d_dp(Rabc, dRabc_dc, W, M)
 
 
-def jacobian(parameters, active, W, M):
+def jacobian(parameters, active, W, M, smoothness):
     """
     The Jacobian
 
@@ -483,7 +491,7 @@ def jacobian(parameters, active, W, M):
     return J[:, active.flatten()]
 
 
-def jacobian_penalties(parameters, active, W, M):
+def jacobian_penalties(parameters, active, W, M, smoothness):
     """
     The Jacobian of the penalty functions
 
@@ -536,7 +544,7 @@ def jacobian_penalties(parameters, active, W, M):
     # For b to vary smoothly and be close to zero
     # For c to vary smoothly
     not_none = lambda x: [xx for xx in x if xx is not None]
-    J = np.concatenate(
+    J = smoothness * np.concatenate(
         not_none(
             [
                 np.degrees(dfa_dp()) if "a" in refine else None,
@@ -561,6 +569,7 @@ def refine_model(
     mask,
     active=None,
     max_iter=100,
+    smoothness=10,
 ) -> tuple:
     """
     Estimate the parameters using least squares
@@ -571,7 +580,7 @@ def refine_model(
     else:
         print("Refining model with %d parameters" % np.count_nonzero(active))
 
-    def get_params_and_args(dx, dy, a, b, c, W, M, active=None):
+    def get_params_and_args(dx, dy, a, b, c, W, M, active=None, smoothness=10):
         # Get the parameters and the active matrix
         parameters = np.stack([dx, dy, a, b, c])
 
@@ -595,13 +604,13 @@ def refine_model(
         active[4, idx] = 0
 
         # Return the parameters
-        return parameters[active].flatten(), (parameters, active, W, M)
+        return parameters[active].flatten(), (parameters, active, W, M, smoothness)
 
-    def parse_params_and_args(x, parameters, active, W, M):
+    def parse_params_and_args(x, parameters, active, W, M, smoothness):
         parameters[active] = x
-        return parameters, active, W, M
+        return parameters, active, W, M, smoothness
 
-    def parse_results(x, parameters, active, W, M):
+    def parse_results(x, parameters, active, W, M, smoothness):
         parameters[active] = x
         return tuple(parameters)
 
@@ -636,13 +645,14 @@ def refine_model(
 
     def fun(x, *args):
         args = parse_params_and_args(x, *args)
-        return np.concatenate([residuals(*args)])  # , penalties(*args)])
+        #return np.concatenate([residuals(*args)])  # , penalties(*args)])
+        return np.concatenate([residuals(*args), penalties(*args)])
 
     def jac(x, *args):
         args = parse_params_and_args(x, *args)
         return np.concatenate(
-            [jacobian(*args)]
-        )  # , jacobian_penalties(*args)], axis=0)
+            [jacobian(*args)
+             , jacobian_penalties(*args)], axis=0)
 
     # Construct the input
     X = data[:, :, 0]
@@ -652,7 +662,7 @@ def refine_model(
     Wc = np.concatenate([X, Y], axis=0)
 
     # Get the params and arguments
-    params, args = get_params_and_args(dx, dy, a, b, c, Wc, M, active)
+    params, args = get_params_and_args(dx, dy, a, b, c, Wc, M, active, smoothness)
 
     # Get the bounds
     # bounds = get_bounds(dx, dy, a, b, c, active)
@@ -662,7 +672,7 @@ def refine_model(
         fun,
         params,
         args=args,
-        # jac=jac,
+        jac=jac,
         loss="linear",
         # bounds=bounds,
         max_nfev=max_iter,
@@ -689,6 +699,7 @@ def _refine(
     info_out: str = None,
     fix: str = None,
     max_iter: int = 100,
+    smoothness: float = 10,
     reference_image: int = None,
     verbose: bool = False,
 ):
@@ -852,7 +863,7 @@ def _refine(
     # Run through the cycles of refinement
     for active in get_cycles(fix):
         dx, dy, a, b, c, rmsd = refine_model(
-            dx, dy, a, b, c, data, mask, active=active, max_iter=max_iter
+            dx, dy, a, b, c, data, mask, active=active, max_iter=max_iter, smoothness=smoothness
         )
 
     # Update the model, remove 1/2 image size and convert back to degrees
