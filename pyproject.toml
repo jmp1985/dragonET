@@ -86,7 +86,6 @@ test = [
 "dragonET.project" = "dragonET.command_line:project"
 "dragonET.refine" = "dragonET.command_line:refine"
 "dragonET.reconstruct" = "dragonET.command_line:reconstruct"
-"dragonET.select_sample_axis" = "dragonET.command_line:select_sample_axis"
 "dragonET.track" = "dragonET.command_line:track"
 "dragonET.contours.extend" = "dragonET.command_line:contours_extend"
 "dragonET.contours.pick" = "dragonET.command_line:contours_pick"
@@ -97,6 +96,8 @@ test = [
 "dragonET.stack.rebin" = "dragonET.command_line:stack_rebin"
 "dragonET.stack.rot90" = "dragonET.command_line:stack_rot90"
 "dragonET.stack.transform" = "dragonET.command_line:stack_transform"
+"dragonET.volume.rebin" = "dragonET.command_line:volume_rebin"
+"dragonET.volume.select_sample_axis" = "dragonET.command_line:volume_select_sample_axis"
 
 #
 # Configure setup tools

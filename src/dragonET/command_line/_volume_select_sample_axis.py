@@ -1,5 +1,5 @@
 #
-# select_sample_axis.py
+# volume_select_sample_axis.py
 #
 # Copyright (C) 2024 Diamond Light Source and Rosalind Franklin Institute
 #
@@ -13,7 +13,7 @@ import mrcfile
 import numpy as np
 import yaml
 
-__all__ = ["select_sample_axis"]
+__all__ = ["volume_select_sample_axis"]
 
 
 def get_description():
@@ -77,7 +77,7 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
     return parser
 
 
-def select_sample_axis_impl(args):
+def volume_select_sample_axis_impl(args):
     """
     Select the sample axis
 
@@ -87,7 +87,7 @@ def select_sample_axis_impl(args):
     start_time = time.time()
 
     # Do the work
-    _select_sample_axis(
+    _volume_select_sample_axis(
         args.volume,
         args.model_in,
         args.model_out,
@@ -97,15 +97,15 @@ def select_sample_axis_impl(args):
     print("Time taken: %.2f seconds" % (time.time() - start_time))
 
 
-def select_sample_axis(args: List[str] = None):
+def volume_select_sample_axis(args: List[str] = None):
     """
     Select the sample axis
 
     """
-    select_sample_axis_impl(get_parser().parse_args(args=args))
+    volume_select_sample_axis_impl(get_parser().parse_args(args=args))
 
 
-def _select_sample_axis(
+def _volume_select_sample_axis(
     volume_filename: str,
     model_in_filename: str = None,
     model_out_filename: str = None,
@@ -136,7 +136,7 @@ def _select_sample_axis(
 
     def get_points(layers):
         p1 = np.array((0, 0, 0))
-        p2 = np.array((1, 0, 0))
+        p2 = np.array((0, 1, 0))
         for layer in layers:
             if isinstance(layer, napari.layers.Points):
                 points = layer.data
@@ -154,11 +154,12 @@ def _select_sample_axis(
                     break
         return [p1, p2]
 
-    def compute_axis_and_origin(points):
+    def compute_axis_and_origin(points, shape):
         p1, p2 = points
         axis = normalise(p2 - p1)
-        t = -p1[0] / axis[0]
+        t = -p1[1] / axis[1]
         axis_origin = t * axis + p1
+        axis_origin = axis_origin / np.array(shape)
         return axis, axis_origin
 
     # Initialise the viewer
@@ -177,7 +178,9 @@ def _select_sample_axis(
     napari.run()
 
     # Compute origin and direction
-    axis, axis_origin = compute_axis_and_origin(get_points(viewer.layers))
+    axis, axis_origin = compute_axis_and_origin(
+        get_points(viewer.layers), volume_file.data.shape
+    )
     print("Axis: %f, %f, %f" % tuple(axis))
     print("Axis origin: %f, %f, %f" % tuple(axis_origin))
 

@@ -156,7 +156,7 @@ def _new(
     # Construct the model dictionary
     model = {
         "axis_origin": (0, 0, 0),
-        "axis": (1, 0, 0),
+        "axis": (0, 1, 0),
         "image_size": image_size,
         "transform": P.tolist(),
     }

@@ -159,7 +159,7 @@ def _prepare_astra_geometry(
     P: np.ndarray,
     pixel_size: float = 1,
     image_size: tuple = (0, 0),
-    axis=(0, 0, 1),
+    axis=(0, 1, 0),
     axis_origin=(0, 0, 0),
 ) -> np.ndarray:
     """
@@ -204,8 +204,13 @@ def _prepare_astra_geometry(
         # Return the rotation matrix
         return U
 
-    def prepare_sample_alignment_rotation_and_translation(axis, axis_origin):
-        U = matrix_to_rotate_a_onto_b(axis, np.array((0, 0, 1)))
+    def prepare_sample_alignment_rotation_and_translation(
+        axis, axis_origin, image_size
+    ):
+        U = matrix_to_rotate_a_onto_b(axis, np.array((0, 1, 0)))
+        axis_origin = axis_origin * np.array(
+            [image_size[1], image_size[0], image_size[1]]
+        )
         return U, -axis_origin
 
     # print("Preparing geometry with pixel size %f" % pixel_size)
@@ -215,7 +220,9 @@ def _prepare_astra_geometry(
     # of the volume and the direction is a unit vector. Here we compute the
     # rotation matrix and translation that put a given line along the centre of
     # the reconstruction volume
-    Rs, Ts = prepare_sample_alignment_rotation_and_translation(axis, axis_origin)
+    Rs, Ts = prepare_sample_alignment_rotation_and_translation(
+        axis, axis_origin, image_size
+    )
 
     # The transformation
     shiftx = P[:, 0] * image_size[1]  # Shift X
@@ -422,7 +429,7 @@ def _reconstruct(
     assert P.shape[0] == projections_file.data.shape[0]
 
     # Get the vector to align to
-    axis = np.array(normalise(model.get("axis", (1, 0, 0)))[::-1])
+    axis = np.array(normalise(model.get("axis", (0, 1, 0)))[::-1])
     axis_origin = np.array(model.get("axis_origin", (0, 0, 0))[::-1])
 
     # Put the projections in sinogram order
