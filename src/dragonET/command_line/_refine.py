@@ -725,9 +725,9 @@ def _refine(
         fig, ax = pylab.subplots(
             ncols=1, figsize=(width, height), constrained_layout=True
         )
-        ax.plot(P[:, 0], label="a")
-        ax.plot(P[:, 1], label="b")
-        ax.plot(P[:, 2], label="c")
+        ax.plot(P[:, 2], label="a")
+        ax.plot(P[:, 3], label="b")
+        ax.plot(P[:, 4], label="c")
         ax.set_xlabel("Image number")
         ax.set_ylabel("Angle (degrees)")
         ax.set_title("Angle vs image number")
@@ -740,8 +740,8 @@ def _refine(
         fig, ax = pylab.subplots(
             ncols=1, figsize=(width, height), constrained_layout=True
         )
-        ax.plot(P[:, 3], label="y")
-        ax.plot(P[:, 4], label="x")
+        ax.plot(P[:, 0], label="x")
+        ax.plot(P[:, 1], label="y")
         ax.set_xlabel("Image number")
         ax.set_ylabel("Shift")
         ax.set_title("Shift vs image number")
@@ -758,10 +758,10 @@ def _refine(
             sharex=True,
             sharey=True,
         )
-        ax[0].hist(P[:, 3].flatten())
-        ax[1].hist(P[:, 4].flatten())
-        ax[0].set_xlabel("Y shift")
-        ax[1].set_xlabel("X shift")
+        ax[0].hist(P[:, 0].flatten())
+        ax[1].hist(P[:, 1].flatten())
+        ax[0].set_xlabel("X shift")
+        ax[1].set_xlabel("Y shift")
         fig.suptitle("Distribution of X and Y shifts")
         fig.savefig(os.path.join(directory, "xy_shift_histogram.png"), dpi=600)
 
