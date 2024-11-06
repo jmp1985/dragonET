@@ -105,6 +105,17 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
             """
         ),
     )
+    parser.add_argument(
+        "--num_macro_cycles",
+        type=int,
+        default=1,
+        dest="num_macro_cycles",
+        help=(
+            """
+            The number of macro cycles in the refinement.
+            """
+        ),
+    )
 
     return parser
 
@@ -125,6 +136,7 @@ def contours_refine_impl(args):
         args.model_out,
         args.contours_in,
         args.contours_out,
+        args.num_macro_cycles,
     )
 
     # Write some timing stats
@@ -481,6 +493,10 @@ def _validate(data_predicted, data_observed, mask, P, image_size):
 
 
 def _refine_contours(projections, P, data, mask, octave):
+    """
+    Refine the contour positions
+
+    """
     # Get the image size
     image_size = np.array(projections.shape[1:])
 
@@ -490,7 +506,7 @@ def _refine_contours(projections, P, data, mask, octave):
     mask = mask[:, select]
     octave = octave[select]
 
-    # The order of images (skip zero)
+    # The order of images to refine (skip zero)
     order = np.argsort(np.abs(P[:, 4]))[1:]
 
     # Select each image sequentially
@@ -545,12 +561,13 @@ def _refine_contours(projections, P, data, mask, octave):
         data[index, point_selection] = data_observed
         mask[index, point_selection] = mask_observed
 
+    # Return the contour information
     return data, mask, octave
 
 
-def process(projections, P, data, mask, octave):
+def _perform_refinement_macro_cycle(projections, P, data, mask, octave):
     """
-    Try to extend the contours
+    Do the refinement macro cycle
 
     """
 
@@ -579,6 +596,7 @@ def _contours_refine(
     model_out: str,
     contours_in: str,
     contours_out: str,
+    num_macro_cycles: int = 1,
 ):
     """
     Extend the contours
@@ -606,6 +624,9 @@ def _contours_refine(
         print("Writing model to %s" % filename)
         yaml.safe_dump(model, open(filename, "w"), default_flow_style=None)
 
+    # Check the input
+    assert num_macro_cycles >= 1
+
     # Read the projections
     projections = read_projections(projections_in)
 
@@ -621,8 +642,8 @@ def _contours_refine(
     assert data.shape[1] == mask.shape[1]
     assert data.shape[1] == octave.shape[0]
 
-    # Try to extend the contours
-    for it in range(10):
+    # Try to refine the contours
+    for it in range(num_macro_cycles):
         # Only select points with enough correspondences
         select = np.count_nonzero(mask, axis=0) >= 2
         data = data[:, select]
@@ -630,7 +651,9 @@ def _contours_refine(
         octave = octave[select]
 
         # Do the processing
-        P, data, mask, octave = process(projections, P, data, mask, octave)
+        P, data, mask, octave = _perform_refinement_macro_cycle(
+            projections, P, data, mask, octave
+        )
 
     # Write the contours
     write_points(contours_out, data, mask, octave)
