@@ -130,12 +130,13 @@ def downsample_volume(data: np.ndarray, factor: int) -> np.ndarray:
     )
     shape = (
         shape[0],
+        factor,
         shape[1],
         factor,
         shape[2],
         factor,
     )
-    data = data.reshape(shape).sum(-1).sum(2).astype("float32")
+    data = data.reshape(shape).sum(-1).sum(-2).sum(-3).astype("float32")
 
     # Return the sampled data
     return data
