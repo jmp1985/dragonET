@@ -40,4 +40,4 @@ RUN export CXX=$(which g++)
 RUN export CUDACXX=$(which nvcc)
 RUN git submodule update --init --recursive
 RUN pip install --upgrade pip
-RUN pip install . --no-cache-dir
+RUN pip install .
