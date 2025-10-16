@@ -50,9 +50,9 @@ dependencies = [
   "napari[all]",
   "napari-mrcfile-reader",
   "numpy",
-  "scipy",
   "pyyaml",
-  "pytorch",
+  "scipy",
+  "torch",
 ]
 
 dynamic = [
