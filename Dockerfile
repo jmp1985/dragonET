@@ -26,7 +26,8 @@ RUN pip install \
   numpy \
   cython \
   six \
-  scipy
+  scipy \
+  torch
 
 RUN git clone https://github.com/jmp1985/astra-toolbox.git
 WORKDIR /app/astra-toolbox/build/linux
