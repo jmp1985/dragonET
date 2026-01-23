@@ -1,6 +1,6 @@
 repos:
 -   repo: https://github.com/ambv/black
-    rev: 23.10.1
+    rev: 26.1.0
     hooks:
     - id: black
       args: [--safe]
@@ -25,19 +25,19 @@ repos:
           - --convention=google
           - --add-ignore=D100,D104,D202,D212,D200,D415
 -   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.3.0
+    rev: v1.19.1
     hooks:
     - id: mypy
       exclude: tests
       args: ["--ignore-missing-imports", "--implicit-optional", "--follow-imports=skip"]
       additional_dependencies: [ types-PyYAML, pydantic ]
 -   repo: https://github.com/pycqa/isort
-    rev: 5.12.0
+    rev: 7.0.0
     hooks:
     - id: isort
       args: ["--profile", "black"]
 -   repo: https://github.com/rubik/xenon
-    rev: v0.9.0
+    rev: v0.9.3
     hooks:
     - id: xenon
       args: [ --max-absolute A, --max-modules A, --max-average A ]
