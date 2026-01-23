@@ -52,6 +52,7 @@ dependencies = [
   "numpy",
   "pyyaml",
   "scipy",
+  "torch",
 ]
 
 dynamic = [
