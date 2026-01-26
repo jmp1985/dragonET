@@ -5,10 +5,6 @@ ENV DEBIAN_FRONTEND noninteractive
 WORKDIR /app
 COPY . .
 
-ENV VIRTUAL_ENV=/opt/venv
-RUN python -m venv $VIRTUAL_ENV
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
 RUN apt update
 RUN apt install -y \
   git \
@@ -25,6 +21,10 @@ RUN apt install -y \
   libc6 \
   libxcb-cursor0 \
   libxcb-xinerama0
+
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 RUN pip install \
   numpy \
