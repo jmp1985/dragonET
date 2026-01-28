@@ -44,11 +44,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default=None,
         dest="contours",
         required=True,
-        help=(
-            """
+        help=("""
             A YAML file containing contour information.
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--model_in",
@@ -56,23 +54,19 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default=None,
         dest="model_in",
         required=True,
-        help=(
-            """
+        help=("""
             A file describing the initial model. This file can either be a
             .rawtlt file or a YAML file.
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--model_out",
         type=str,
         default="refined_model.yaml",
         dest="model_out",
-        help=(
-            """
+        help=("""
             A YAML file describing the refined model.
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--fix",
@@ -108,33 +102,27 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         type=str,
         default="plots",
         dest="plots_out",
-        help=(
-            """
+        help=("""
             The directory to write some plots
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--info_out",
         type=str,
         default=None,
         dest="info_out",
-        help=(
-            """
+        help=("""
             A YAML file containing refinement information.
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "-v",
         default=False,
         dest="verbose",
         action="store_true",
-        help=(
-            """
+        help=("""
             Set verbose output
-            """
-        ),
+            """),
     )
 
     return parser

@@ -43,11 +43,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default=None,
         dest="projections_in",
         required=True,
-        help=(
-            """
+        help=("""
             The filename for the projection images
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--model_in",
@@ -55,22 +53,18 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default=None,
         dest="model_in",
         required=True,
-        help=(
-            """
+        help=("""
             A file describing the initial model.
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--model_out",
         type=str,
         default="aligned_model.yaml",
         dest="model_out",
-        help=(
-            """
+        help=("""
             A YAML file describing the refined model.
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--reference_image",

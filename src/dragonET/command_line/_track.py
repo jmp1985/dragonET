@@ -48,11 +48,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default=None,
         dest="projections_in",
         required=True,
-        help=(
-            """
+        help=("""
             The filename for the projection images
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--model_in",
@@ -60,33 +58,27 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default=None,
         dest="model_in",
         required=True,
-        help=(
-            """
+        help=("""
             A file describing the initial model.
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--model_out",
         type=str,
         default="tracked_model.yaml",
         dest="model_out",
-        help=(
-            """
+        help=("""
             A file describing the output model.
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--contours",
         type=str,
         default="contours.npz",
         dest="contours_out",
-        help=(
-            """
+        help=("""
             A binary file describing the contours.
-            """
-        ),
+            """),
     )
 
     return parser

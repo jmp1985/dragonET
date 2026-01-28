@@ -44,11 +44,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default=None,
         dest="projections_in",
         required=True,
-        help=(
-            """
+        help=("""
             The filename for the input projection images
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "-o",
@@ -56,11 +54,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default="predicted.mrc",
         dest="projections_out",
         required=False,
-        help=(
-            """
+        help=("""
             The filename for the output projection images
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "--model_in",
@@ -68,12 +64,10 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default=None,
         dest="model_in",
         required=True,
-        help=(
-            """
+        help=("""
             A file describing the initial model. This file can either be a
             .rawtlt file or a YAML file.
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "-s",
@@ -81,11 +75,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         type=int,
         default=1,
         dest="subset_size",
-        help=(
-            """
+        help=("""
             The size of the subset to use to predict adjacent images.
-            """
-        ),
+            """),
     )
 
     return parser

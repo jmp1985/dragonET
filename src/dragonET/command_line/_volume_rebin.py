@@ -40,11 +40,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default=None,
         dest="volume_in",
         required=True,
-        help=(
-            """
+        help=("""
             The filename for the input projection images
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "-o",
@@ -52,11 +50,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         default="rebinned.mrc",
         dest="volume_out",
         required=False,
-        help=(
-            """
+        help=("""
             The filename for the output projection images
-            """
-        ),
+            """),
     )
     parser.add_argument(
         "-f",
@@ -64,11 +60,9 @@ def get_parser(parser: ArgumentParser = None) -> ArgumentParser:
         type=float,
         default=1,
         dest="factor",
-        help=(
-            """
+        help=("""
             The rebin factor (must be a power of 2).
-            """
-        ),
+            """),
     )
 
     return parser
